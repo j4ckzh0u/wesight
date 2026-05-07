@@ -27,6 +27,15 @@ WeSight is an open-source desktop app that turns coding agents and automation ru
 
 The goal is simple: install WeSight, choose an engine, configure your model once, then work with powerful agents through a polished chat interface.
 
+## Download
+
+Public desktop builds are published through GitHub Releases:
+
+- Website: [wesight.ai](https://wesight.ai/)
+- Latest release: [github.com/freestylefly/wesight/releases/latest](https://github.com/freestylefly/wesight/releases/latest)
+
+Release assets are intended for end users. CI artifacts are short-lived build outputs for maintainers to test before a release is published.
+
 ## Highlights
 
 - **Multiple agent engines** - Use Claude Code, Codex, OpenClaw, Hermes Agent, or the built-in Claude Agent SDK runner from the same chat workspace.
@@ -44,13 +53,13 @@ The goal is simple: install WeSight, choose an engine, configure your model once
 
 ## Agent Engines
 
-| Engine | Best For | Setup Path |
-| --- | --- | --- |
-| Built-in Claude Agent SDK | General local cowork sessions and skill execution | Included in WeSight |
-| Claude Code | Claude Code workflows in a graphical chat surface | macOS one-click CLI install or existing local CLI config |
-| Codex | Codex CLI workflows in a graphical chat surface | macOS one-click CLI install or existing local CLI config |
-| OpenClaw | Sandbox-style agent runtime and gateway integrations | WeSight-managed pinned runtime |
-| Hermes Agent | Local Hermes Agent runtime experiments | WeSight-managed pinned runtime |
+| Engine                    | Best For                                             | Setup Path                                               |
+| ------------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
+| Built-in Claude Agent SDK | General local cowork sessions and skill execution    | Included in WeSight                                      |
+| Claude Code               | Claude Code workflows in a graphical chat surface    | macOS one-click CLI install or existing local CLI config |
+| Codex                     | Codex CLI workflows in a graphical chat surface      | macOS one-click CLI install or existing local CLI config |
+| OpenClaw                  | Sandbox-style agent runtime and gateway integrations | WeSight-managed pinned runtime                           |
+| Hermes Agent              | Local Hermes Agent runtime experiments               | WeSight-managed pinned runtime                           |
 
 ## Model Configuration
 
@@ -138,6 +147,25 @@ Runtime builders are pinned in `package.json`:
 
 Windows packages can bundle a portable Python runtime for Python-based skills. OpenClaw and Hermes runtime folders are generated under `vendor/` and ignored by Git.
 
+## Release Workflow
+
+WeSight uses GitHub Releases for desktop distribution.
+
+1. Commit release-ready changes to `main`.
+2. Create and push a version tag, for example:
+
+```bash
+git tag v2026.4.8-alpha.1
+git push origin v2026.4.8-alpha.1
+```
+
+3. The `Build Platforms` workflow builds macOS, Windows, and Linux packages.
+4. Build artifacts are uploaded to the workflow run for temporary testing.
+5. A draft GitHub Release is created with the generated installers attached.
+6. Review the draft notes and assets, then publish the release from GitHub.
+
+The website download button can point to the latest release URL so users always land on the newest published build.
+
 ## Architecture
 
 WeSight uses Electron process isolation. The renderer never directly accesses Node.js APIs; all privileged operations go through a typed preload bridge and IPC handlers in the main process.
@@ -192,14 +220,14 @@ src/shared/                       Shared constants and types
 
 WeSight includes a broad skills library for day-to-day agent work:
 
-| Area | Examples |
-| --- | --- |
-| Research | web search, tech news, stock research, film/music search |
-| Documents | DOCX, XLSX, PPTX, PDF processing |
-| Automation | Playwright, local tools, scheduled tasks |
-| Creative | Remotion video, frontend design, canvas design, Seedream, Seedance |
-| Communication | IMAP/SMTP email |
-| Agent building | skill creator, skill vetting, custom planning |
+| Area           | Examples                                                           |
+| -------------- | ------------------------------------------------------------------ |
+| Research       | web search, tech news, stock research, film/music search           |
+| Documents      | DOCX, XLSX, PPTX, PDF processing                                   |
+| Automation     | Playwright, local tools, scheduled tasks                           |
+| Creative       | Remotion video, frontend design, canvas design, Seedream, Seedance |
+| Communication  | IMAP/SMTP email                                                    |
+| Agent building | skill creator, skill vetting, custom planning                      |
 
 Skills can be enabled, disabled, and routed from the desktop UI.
 

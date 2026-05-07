@@ -25,6 +25,9 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: write
+
 jobs:
   # ========== macOS 构建 ==========
   build-macos:
@@ -40,9 +43,9 @@ jobs:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - run: npm install
-      
+
       # 设置 OpenClaw runtime (如果需要)
       - name: Setup OpenClaw Runtime
         run: |
@@ -51,7 +54,7 @@ jobs:
           else
             echo "⚠ OpenClaw runtime not found, build may fail"
           fi
-      
+
       - name: Build macOS
         run: npm run dist:mac
         env:
@@ -61,7 +64,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: macos-build
@@ -82,21 +85,21 @@ jobs:
           path: ~\AppData\Local\npm-cache
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - run: npm install
-      
+
       # Windows 需要 Python 运行时
       - name: Setup Python Runtime
         run: npm run setup:python-runtime
         env:
           LOBSTERAI_PORTABLE_PYTHON_ARCHIVE: ${{ secrets.WINDOWS_PYTHON_ARCHIVE }}
-      
+
       - name: Build Windows
         run: npm run dist:win
         env:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
@@ -117,17 +120,17 @@ jobs:
           path: ~/.npm
           key: npm-${{ runner.os }}-${{ hashFiles('package.json') }}
           restore-keys: npm-${{ runner.os }}-
-      
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
-      
+
       - run: npm install
-      
+
       - name: Build Linux
         run: npm run dist:linux
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-build
@@ -143,21 +146,32 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
+
+      - name: Create Draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            "$TAG_NAME"
             artifacts/macos-build/*.dmg
             artifacts/windows-build/*.exe
             artifacts/linux-build/*
-          draft: true
-          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            --draft
+            --generate-notes
+            --title "$TAG_NAME"
+            --repo "$GITHUB_REPOSITORY"
+          )
+
+          if [[ "$TAG_NAME" == *"-alpha"* || "$TAG_NAME" == *"-beta"* || "$TAG_NAME" == *"-rc"* ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "${args[@]}"
