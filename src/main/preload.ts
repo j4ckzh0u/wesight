@@ -278,11 +278,15 @@ contextBridge.exposeInMainWorld('electron', {
   cowork: {
     // Session management
     startSession: (options: { prompt: string; cwd?: string; systemPrompt?: string; activeSkillIds?: string[]; agentId?: string; teamId?: string; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) =>
-      ipcRenderer.invoke('cowork:session:start', options),
+      ipcRenderer.invoke(CoworkIpcChannel.SessionStart, options),
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[]; imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }> }) =>
-      ipcRenderer.invoke('cowork:session:continue', options),
+      ipcRenderer.invoke(CoworkIpcChannel.SessionContinue, options),
     stopSession: (sessionId: string) =>
-      ipcRenderer.invoke('cowork:session:stop', sessionId),
+      ipcRenderer.invoke(CoworkIpcChannel.SessionStop, sessionId),
+    subscribeSession: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SessionSubscribe, { sessionId }),
+    unsubscribeSession: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SessionUnsubscribe, { sessionId }),
     deleteSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:delete', sessionId),
     deleteSessions: (sessionIds: string[]) =>
@@ -292,11 +296,11 @@ contextBridge.exposeInMainWorld('electron', {
     renameSession: (options: { sessionId: string; title: string }) =>
       ipcRenderer.invoke('cowork:session:rename', options),
     getSession: (sessionId: string) =>
-      ipcRenderer.invoke('cowork:session:get', sessionId),
+      ipcRenderer.invoke(CoworkIpcChannel.SessionGet, sessionId),
     remoteManaged: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
     listSessions: (agentId?: string) =>
-      ipcRenderer.invoke('cowork:session:list', agentId),
+      ipcRenderer.invoke(CoworkIpcChannel.SessionList, agentId),
     exportResultImage: (options: { rect: { x: number; y: number; width: number; height: number }; defaultFileName?: string }) =>
       ipcRenderer.invoke('cowork:session:exportResultImage', options),
     captureImageChunk: (options: { rect: { x: number; y: number; width: number; height: number } }) =>
@@ -447,8 +451,24 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(CoworkIpcChannel.StreamMessage, handler);
       return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamMessage, handler);
     },
-    onStreamMessageUpdate: (callback: (data: { sessionId: string; messageId: string; content: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; messageId: string; content: string }) => callback(data);
+    onStreamMessageUpdate: (callback: (data: {
+      sessionId: string;
+      messageId: string;
+      content: string;
+      mode?: 'snapshot' | 'delta' | 'final';
+      offset?: number;
+      sequence?: number;
+      finalLength?: number;
+    }) => void) => {
+      const handler = (_event: any, data: {
+        sessionId: string;
+        messageId: string;
+        content: string;
+        mode?: 'snapshot' | 'delta' | 'final';
+        offset?: number;
+        sequence?: number;
+        finalLength?: number;
+      }) => callback(data);
       ipcRenderer.on(CoworkIpcChannel.StreamMessageUpdate, handler);
       return () => ipcRenderer.removeListener(CoworkIpcChannel.StreamMessageUpdate, handler);
     },

@@ -12,7 +12,6 @@ import {
   updateAgent as updateAgentAction,
   updateTeam as updateTeamAction,
 } from '../store/slices/agentSlice';
-import { clearCurrentSession } from '../store/slices/coworkSlice';
 import { clearActiveSkills,setActiveSkillIds } from '../store/slices/skillSlice';
 import type {
   Agent,
@@ -21,6 +20,7 @@ import type {
   PresetAgent,
   UpdateAgentTeamRequest,
 } from '../types/agent';
+import { coworkService } from './cowork';
 
 const toAgentSummary = (agent: Agent) => ({
   id: agent.id,
@@ -110,8 +110,7 @@ class AgentService {
       store.dispatch(removeAgent(id));
       if (wasCurrentAgent) {
         this.switchAgent('main');
-        const { coworkService } = await import('./cowork');
-        coworkService.loadSessions('main');
+        await coworkService.loadSessions('main');
       }
       return true;
     } catch (error) {
@@ -146,7 +145,7 @@ class AgentService {
 
   switchAgent(agentId: string): void {
     store.dispatch(setCurrentAgentId(agentId));
-    store.dispatch(clearCurrentSession());
+    coworkService.clearSession();
     const agent = store.getState().agent.agents.find((a) => a.id === agentId);
     if (agent?.skillIds?.length) {
       store.dispatch(setActiveSkillIds(agent.skillIds));
@@ -210,7 +209,7 @@ class AgentService {
 
   switchTeam(teamId: string): void {
     store.dispatch(setCurrentTeamId(teamId));
-    store.dispatch(clearCurrentSession());
+    coworkService.clearSession();
     const team = store.getState().agent.teams.find((item) => item.id === teamId);
     if (team?.skillIds?.length) {
       store.dispatch(setActiveSkillIds(team.skillIds));

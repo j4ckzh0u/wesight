@@ -173,6 +173,8 @@ import {
   type RuntimeModelSnapshot,
   RuntimeTelemetryTracker,
 } from './libs/runtimeTelemetryTracker';
+import { SessionSubscriptionRegistry } from './libs/sessionSubscriptions';
+import { type MessageUpdatePayload, StreamUpdateCoalescer } from './libs/streamUpdateCoalescer';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrl,
@@ -195,6 +197,7 @@ const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 const MIN_MEMORY_USER_MEMORIES_MAX_ITEMS = 1;
 const MAX_MEMORY_USER_MEMORIES_MAX_ITEMS = 60;
 const IPC_MESSAGE_CONTENT_MAX_CHARS = 120_000;
+const IPC_UPDATE_CONTENT_MAX_BYTES = 32 * 1024;
 const IPC_UPDATE_CONTENT_MAX_CHARS = 120_000;
 const IPC_STRING_MAX_CHARS = 4_000;
 const IPC_MAX_DEPTH = 5;
@@ -767,8 +770,73 @@ let externalAgentCliInstallerForwarderBound = false;
 let coworkRuntimeForwarderBound = false;
 let memoryMigrationDone = false;
 let preventSleepBlockerId: number | null = null;
+const sessionSubscriptions = new SessionSubscriptionRegistry();
+const sessionSubscriptionCleanupBoundWindowIds = new Set<number>();
 
 const HERMES_IM_SESSION_SYNC_INTERVAL_MS = 4000;
+
+const getTargetWindowsForSession = (sessionId: string, options: { fallbackToAll?: boolean } = {}): BrowserWindow[] => {
+  const subscribedWindowIds = new Set(sessionSubscriptions.getSubscribedWindows(sessionId).map(win => win.id));
+  const allWindows = BrowserWindow.getAllWindows().filter(win => !win.isDestroyed());
+  const subscribedWindows = allWindows.filter(win => subscribedWindowIds.has(win.webContents.id));
+  if (subscribedWindows.length > 0 || options.fallbackToAll !== true) {
+    return subscribedWindows;
+  }
+  return allWindows;
+};
+
+const sendCoworkStreamPayload = (
+  sessionId: string,
+  channel: CoworkIpcChannel,
+  type: Parameters<typeof recordIpcSend>[0]['type'],
+  payload: unknown,
+  options: { fallbackToAll?: boolean } = {},
+): void => {
+  const windows = getTargetWindowsForSession(sessionId, options);
+  windows.forEach((win) => {
+    if (win.isDestroyed()) return;
+    try {
+      recordIpcSend({
+        type,
+        sessionId,
+        channel,
+        payload,
+        windowCount: 1,
+      });
+      win.webContents.send(channel, payload);
+    } catch (error) {
+      console.error('[CoworkForwarder] failed to forward cowork stream payload:', error);
+    }
+  });
+};
+
+const bindSessionSubscriptionCleanup = (webContents: WebContents): void => {
+  if (sessionSubscriptionCleanupBoundWindowIds.has(webContents.id)) return;
+  sessionSubscriptionCleanupBoundWindowIds.add(webContents.id);
+  webContents.once('destroyed', () => {
+    sessionSubscriptions.removeWindow(webContents.id);
+    sessionSubscriptionCleanupBoundWindowIds.delete(webContents.id);
+  });
+};
+
+const subscribeSenderToCoworkSession = (webContents: WebContents, sessionId: string): void => {
+  if (!sessionId || webContents.isDestroyed()) return;
+  sessionSubscriptions.subscribe(sessionId, webContents);
+  bindSessionSubscriptionCleanup(webContents);
+};
+
+const messageUpdateCoalescer = new StreamUpdateCoalescer({
+  flushIntervalMs: 500,
+  maxPayloadBytes: IPC_UPDATE_CONTENT_MAX_BYTES,
+  send: (payload: MessageUpdatePayload) => {
+    sendCoworkStreamPayload(
+      payload.sessionId,
+      CoworkIpcChannel.StreamMessageUpdate,
+      'messageUpdate',
+      payload,
+    );
+  },
+});
 
 const initStore = async (): Promise<SqliteStore> => {
   if (!storeInitPromise) {
@@ -1072,26 +1140,11 @@ const getCoworkFileActivityTracker = (): CoworkFileActivityTracker => {
     coworkFileActivityTracker = new CoworkFileActivityTracker((activity) => {
       updateDesktopPetTaskSnapshot(activity.sessionId, DesktopPetTaskStatus.Coding);
       const safeActivity = sanitizeCoworkFileActivityForIpc(activity);
-      const windows = BrowserWindow.getAllWindows();
-      windows.forEach((win) => {
-        if (win.isDestroyed()) return;
-        try {
-          const payload = {
-            sessionId: activity.sessionId,
-            activity: safeActivity,
-          };
-          recordIpcSend({
-            type: 'fileActivity',
-            sessionId: activity.sessionId,
-            channel: CoworkIpcChannel.StreamFileActivity,
-            payload,
-            windowCount: 1,
-          });
-          win.webContents.send(CoworkIpcChannel.StreamFileActivity, payload);
-        } catch (error) {
-          console.error('[CoworkFileActivity] failed to forward file activity:', error);
-        }
-      });
+      const payload = {
+        sessionId: activity.sessionId,
+        activity: safeActivity,
+      };
+      sendCoworkStreamPayload(activity.sessionId, CoworkIpcChannel.StreamFileActivity, 'fileActivity', payload);
     });
   }
   return coworkFileActivityTracker;
@@ -1919,47 +1972,15 @@ const bindCoworkRuntimeForwarder = (): void => {
       // File activity is best-effort and must not block message rendering.
     }
     const safeMessage = sanitizeCoworkMessageForIpc(message);
-    const windows = BrowserWindow.getAllWindows();
-    console.log('[CoworkForwarder] forwarding message: sessionId=', sessionId, 'type=', message?.type, 'windowCount=', windows.length);
-    windows.forEach((win) => {
-      if (win.isDestroyed()) return;
-      try {
-        const payload = { sessionId, message: safeMessage };
-        recordIpcSend({
-          type: 'message',
-          sessionId,
-          channel: CoworkIpcChannel.StreamMessage,
-          payload,
-          windowCount: 1,
-        });
-        win.webContents.send(CoworkIpcChannel.StreamMessage, payload);
-      } catch (error) {
-        console.error('Failed to forward cowork message:', error);
-      }
-    });
+    const payload = { sessionId, message: safeMessage };
+    sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamMessage, 'message', payload);
   });
 
   runtime.on('messageUpdate', (sessionId: string, messageId: string, content: string) => {
     startCoworkFileActivityForSession(sessionId);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Replying);
     const safeContent = truncateIpcString(content, IPC_UPDATE_CONTENT_MAX_CHARS);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach((win) => {
-      if (win.isDestroyed()) return;
-      try {
-        const payload = { sessionId, messageId, content: safeContent };
-        recordIpcSend({
-          type: 'messageUpdate',
-          sessionId,
-          channel: CoworkIpcChannel.StreamMessageUpdate,
-          payload,
-          windowCount: 1,
-        });
-        win.webContents.send(CoworkIpcChannel.StreamMessageUpdate, payload);
-      } catch (error) {
-        console.error('Failed to forward cowork message update:', error);
-      }
-    });
+    messageUpdateCoalescer.append(sessionId, messageId, safeContent);
   });
 
   runtime.on('permissionRequest', (sessionId: string, request: any) => {
@@ -1968,41 +1989,16 @@ const bindCoworkRuntimeForwarder = (): void => {
       return;
     }
     const safeRequest = sanitizePermissionRequestForIpc(request);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach((win) => {
-      if (win.isDestroyed()) return;
-      try {
-        const payload = { sessionId, request: safeRequest };
-        recordIpcSend({
-          type: 'permission',
-          sessionId,
-          channel: CoworkIpcChannel.StreamPermission,
-          payload,
-          windowCount: 1,
-        });
-        win.webContents.send(CoworkIpcChannel.StreamPermission, payload);
-      } catch (error) {
-        console.error('Failed to forward cowork permission request:', error);
-      }
-    });
+    const payload = { sessionId, request: safeRequest };
+    sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamPermission, 'permission', payload, { fallbackToAll: true });
   });
 
   runtime.on('complete', (sessionId: string, claudeSessionId: string | null) => {
+    messageUpdateCoalescer.flushSession(sessionId, 'final');
     getCoworkFileActivityTracker().stopSession(sessionId, 1200);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Completed);
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach((win) => {
-      if (win.isDestroyed()) return;
-      const payload = { sessionId, claudeSessionId };
-      recordIpcSend({
-        type: 'complete',
-        sessionId,
-        channel: CoworkIpcChannel.StreamComplete,
-        payload,
-        windowCount: 1,
-      });
-      win.webContents.send(CoworkIpcChannel.StreamComplete, payload);
-    });
+    const payload = { sessionId, claudeSessionId };
+    sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamComplete, 'complete', payload, { fallbackToAll: true });
     // If session used a server model, notify renderer to refresh quota
     try {
       const apiConfig = resolveCurrentApiConfig();
@@ -2019,26 +2015,17 @@ const bindCoworkRuntimeForwarder = (): void => {
   });
 
   runtime.on('error', (sessionId: string, error: string) => {
+    messageUpdateCoalescer.flushSession(sessionId, 'final');
     getCoworkFileActivityTracker().stopSession(sessionId, 1200);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Error);
     // Mark session as error in store so the .catch() fallback can detect duplicates.
     try { getCoworkStore().updateSession(sessionId, { status: 'error' }); } catch { /* ignore */ }
-    const windows = BrowserWindow.getAllWindows();
-    windows.forEach((win) => {
-      if (win.isDestroyed()) return;
-      const payload = { sessionId, error };
-      recordIpcSend({
-        type: 'error',
-        sessionId,
-        channel: CoworkIpcChannel.StreamError,
-        payload,
-        windowCount: 1,
-      });
-      win.webContents.send(CoworkIpcChannel.StreamError, payload);
-    });
+    const payload = { sessionId, error };
+    sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamError, 'error', payload, { fallbackToAll: true });
   });
 
   runtime.on('sessionStopped', (sessionId: string) => {
+    messageUpdateCoalescer.flushSession(sessionId, 'final');
     getCoworkFileActivityTracker().stopSession(sessionId);
     updateDesktopPetTaskSnapshot(sessionId, DesktopPetTaskStatus.Stopped);
   });
@@ -2048,30 +2035,29 @@ const bindCoworkRuntimeForwarder = (): void => {
 
 const broadcastCoworkMessage = (sessionId: string, message: CoworkMessage): void => {
   const safeMessage = sanitizeCoworkMessageForIpc(message);
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (win.isDestroyed()) return;
-    try {
-      win.webContents.send(CoworkIpcChannel.StreamMessage, { sessionId, message: safeMessage });
-    } catch (error) {
-      console.error('[CoworkForwarder] failed to broadcast manual message:', error);
-    }
-  });
+  sendCoworkStreamPayload(sessionId, CoworkIpcChannel.StreamMessage, 'message', { sessionId, message: safeMessage });
   broadcastCoworkSessionsChanged();
 };
 
 const broadcastCoworkComplete = (sessionId: string): void => {
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (win.isDestroyed()) return;
-    win.webContents.send(CoworkIpcChannel.StreamComplete, { sessionId, claudeSessionId: null });
-  });
+  sendCoworkStreamPayload(
+    sessionId,
+    CoworkIpcChannel.StreamComplete,
+    'complete',
+    { sessionId, claudeSessionId: null },
+    { fallbackToAll: true },
+  );
   broadcastCoworkSessionsChanged();
 };
 
 const broadcastCoworkError = (sessionId: string, error: string): void => {
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (win.isDestroyed()) return;
-    win.webContents.send(CoworkIpcChannel.StreamError, { sessionId, error });
-  });
+  sendCoworkStreamPayload(
+    sessionId,
+    CoworkIpcChannel.StreamError,
+    'error',
+    { sessionId, error },
+    { fallbackToAll: true },
+  );
   broadcastCoworkSessionsChanged();
 };
 
@@ -4177,7 +4163,29 @@ if (!gotTheLock) {
   });
 
   // Cowork IPC handlers
-  ipcMain.handle('cowork:session:start', async (_event, options: {
+  ipcMain.handle(CoworkIpcChannel.SessionSubscribe, async (event, input: { sessionId?: string } | string) => {
+    const sessionId = typeof input === 'string' ? input : input?.sessionId;
+    if (!sessionId) {
+      return { success: false, error: 'Session id is required.' };
+    }
+    subscribeSenderToCoworkSession(event.sender, sessionId);
+    return { success: true };
+  });
+
+  ipcMain.handle(CoworkIpcChannel.SessionUnsubscribe, async (event, input: { sessionId?: string } | string) => {
+    const sessionId = typeof input === 'string' ? input : input?.sessionId;
+    if (!sessionId) {
+      return { success: false, error: 'Session id is required.' };
+    }
+    sessionSubscriptions.unsubscribe(sessionId, event.sender.id);
+    return { success: true };
+  });
+
+  ipcMain.handle(CoworkIpcChannel.SessionSubscriptionsDebug, async () => {
+    return { success: true, subscriptions: sessionSubscriptions.getSnapshot() };
+  });
+
+  ipcMain.handle(CoworkIpcChannel.SessionStart, async (event, options: {
     prompt: string;
     cwd?: string;
     systemPrompt?: string;
@@ -4237,6 +4245,7 @@ if (!gotTheLock) {
         }
           : { runtimeSnapshot },
       );
+      subscribeSenderToCoworkSession(event.sender, session.id);
 
       // Update session status to 'running' before starting async task
       // This ensures the frontend receives the correct status immediately
@@ -4305,11 +4314,13 @@ if (!gotTheLock) {
         if (existing?.status === 'error') return;
         const errorMessage = error instanceof Error ? error.message : String(error);
         updateDesktopPetTaskSnapshot(session.id, DesktopPetTaskStatus.Error);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win.isDestroyed()) return;
-          win.webContents.send(CoworkIpcChannel.StreamError, { sessionId: session.id, error: errorMessage });
-        });
+        sendCoworkStreamPayload(
+          session.id,
+          CoworkIpcChannel.StreamError,
+          'error',
+          { sessionId: session.id, error: errorMessage },
+          { fallbackToAll: true },
+        );
       });
 
       const sessionWithMessages = coworkStoreInstance.getSession(session.id) || {
@@ -4325,7 +4336,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:continue', async (_event, options: {
+  ipcMain.handle(CoworkIpcChannel.SessionContinue, async (event, options: {
     sessionId: string;
     prompt: string;
     systemPrompt?: string;
@@ -4333,6 +4344,7 @@ if (!gotTheLock) {
     imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
   }) => {
     try {
+      subscribeSenderToCoworkSession(event.sender, options.sessionId);
       const existingSession = getCoworkStore().getSession(options.sessionId);
       const inferredEngine = existingSession?.teamId
         ? resolveCoworkAgentEngine()
@@ -4401,11 +4413,13 @@ if (!gotTheLock) {
         if (existing?.status === 'error') return;
         const errorMessage = error instanceof Error ? error.message : String(error);
         updateDesktopPetTaskSnapshot(options.sessionId, DesktopPetTaskStatus.Error);
-        const windows = BrowserWindow.getAllWindows();
-        windows.forEach((win) => {
-          if (win.isDestroyed()) return;
-          win.webContents.send(CoworkIpcChannel.StreamError, { sessionId: options.sessionId, error: errorMessage });
-        });
+        sendCoworkStreamPayload(
+          options.sessionId,
+          CoworkIpcChannel.StreamError,
+          'error',
+          { sessionId: options.sessionId, error: errorMessage },
+          { fallbackToAll: true },
+        );
       });
 
       const session = getCoworkStore().getSession(options.sessionId);
@@ -4418,7 +4432,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:stop', async (_event, sessionId: string) => {
+  ipcMain.handle(CoworkIpcChannel.SessionStop, async (_event, sessionId: string) => {
     try {
       const runtime = getCoworkEngineRouter();
       runtime.stopSession(sessionId);
@@ -4524,7 +4538,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
+  ipcMain.handle(CoworkIpcChannel.SessionGet, async (_event, sessionId: string) => {
     try {
       const session = getCoworkStore().getSession(sessionId);
       return { success: true, session };
@@ -4549,7 +4563,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
+  ipcMain.handle(CoworkIpcChannel.SessionList, async (_event, agentId?: string) => {
     try {
       const sessions = getCoworkStore().listSessions(agentId);
       return { success: true, sessions };

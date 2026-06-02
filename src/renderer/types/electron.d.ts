@@ -720,7 +720,17 @@ interface IElectronAPI {
     readBootstrapFile: (filename: string) => Promise<{ success: boolean; content: string; error?: string }>;
     writeBootstrapFile: (filename: string, content: string) => Promise<{ success: boolean; error?: string }>;
     onStreamMessage: (callback: (data: { sessionId: string; message: CoworkMessage }) => void) => () => void;
-    onStreamMessageUpdate: (callback: (data: { sessionId: string; messageId: string; content: string }) => void) => () => void;
+    subscribeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    unsubscribeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    onStreamMessageUpdate: (callback: (data: {
+      sessionId: string;
+      messageId: string;
+      content: string;
+      mode?: 'snapshot' | 'delta' | 'final';
+      offset?: number;
+      sequence?: number;
+      finalLength?: number;
+    }) => void) => () => void;
     onStreamFileActivity: (callback: (data: { sessionId: string; activity: CoworkFileActivity }) => void) => () => void;
     onStreamPermission: (callback: (data: { sessionId: string; request: CoworkPermissionRequest }) => void) => () => void;
     onStreamPermissionDismiss: (callback: (data: { requestId: string }) => void) => () => void;

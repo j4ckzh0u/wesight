@@ -63,6 +63,7 @@ class CoworkService {
   private hermesEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
+  private subscribedSessionId: string | null = null;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -138,8 +139,8 @@ class CoworkService {
     this.streamListenerCleanups.push(messageCleanup);
 
     // Message update listener (for streaming content updates)
-    const messageUpdateCleanup = cowork.onStreamMessageUpdate(({ sessionId, messageId, content }) => {
-      store.dispatch(updateMessageContent({ sessionId, messageId, content }));
+    const messageUpdateCleanup = cowork.onStreamMessageUpdate((payload) => {
+      store.dispatch(updateMessageContent(payload));
     });
     this.streamListenerCleanups.push(messageUpdateCleanup);
 
@@ -264,6 +265,36 @@ class CoworkService {
     this.streamListenerCleanups = [];
     this.openClawEngineListenerAttached = false;
     this.hermesEngineListenerAttached = false;
+  }
+
+  private async subscribeToSession(sessionId: string): Promise<void> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.subscribeSession) return;
+    if (this.subscribedSessionId === sessionId) return;
+    const previousSessionId = this.subscribedSessionId;
+    this.subscribedSessionId = null;
+    if (previousSessionId && cowork.unsubscribeSession) {
+      await cowork.unsubscribeSession(previousSessionId).catch((error) => {
+        console.debug('[CoworkService] failed to unsubscribe from previous session stream:', error);
+      });
+    }
+    const result = await cowork.subscribeSession(sessionId).catch((error) => {
+      console.debug('[CoworkService] failed to subscribe to session stream:', error);
+      return null;
+    });
+    if (result?.success) {
+      this.subscribedSessionId = sessionId;
+    }
+  }
+
+  private async unsubscribeCurrentSession(): Promise<void> {
+    const cowork = window.electron?.cowork;
+    const sessionId = this.subscribedSessionId;
+    if (!sessionId) return;
+    this.subscribedSessionId = null;
+    await cowork?.unsubscribeSession?.(sessionId)?.catch((error) => {
+      console.debug('[CoworkService] failed to unsubscribe from session stream:', error);
+    });
   }
 
   async loadSessions(agentId?: string): Promise<void> {
@@ -393,6 +424,7 @@ class CoworkService {
 
     const result = await cowork.startSession(options);
     if (result.success && result.session) {
+      await this.subscribeToSession(result.session.id);
       store.dispatch(addSession(result.session));
       if (result.session.status !== 'running') {
         store.dispatch(setStreaming(false));
@@ -426,6 +458,7 @@ class CoworkService {
 
     store.dispatch(setStreaming(true));
     store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
+    await this.subscribeToSession(options.sessionId);
 
     const result = await cowork.continueSession({
       sessionId: options.sessionId,
@@ -612,6 +645,7 @@ class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return null;
     const requestId = ++this.latestLoadSessionRequestId;
+    await this.subscribeToSession(sessionId);
 
     let result = await cowork.getSession(sessionId);
     if (result.success && result.session?.codexAppThreadId) {
@@ -640,6 +674,9 @@ class CoworkService {
       return result.session;
     }
 
+    if (requestId === this.latestLoadSessionRequestId) {
+      await this.unsubscribeCurrentSession();
+    }
     console.error('Failed to load session:', result.error);
     return null;
   }
@@ -1016,10 +1053,12 @@ class CoworkService {
   }
 
   clearSession(): void {
+    void this.unsubscribeCurrentSession();
     store.dispatch(clearCurrentSession());
   }
 
   destroy(): void {
+    void this.unsubscribeCurrentSession();
     this.cleanupListeners();
     this.openClawStatusListeners.clear();
     this.hermesStatusListeners.clear();

@@ -9,7 +9,7 @@ import { quickActionService } from '../../services/quickAction';
 import { skillService } from '../../services/skill';
 import { RootState, store } from '../../store';
 import { setCurrentAgentId, setCurrentTeamId } from '../../store/slices/agentSlice';
-import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
+import { addMessage, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { CoworkImageAttachment, CoworkSession, ExternalAgentProviderAppType, OpenClawEngineStatus } from '../../types/cowork';
@@ -573,7 +573,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   const startFreshChatFromSlash = () => {
     coworkService.clearSession();
-    dispatch(clearCurrentSession());
     dispatch(clearSelection());
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
@@ -954,7 +953,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   useEffect(() => {
     const handleNewSession = () => {
-      dispatch(clearCurrentSession());
+      coworkService.clearSession();
       dispatch(clearSelection());
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
         detail: { clear: true },
@@ -1074,7 +1073,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           onSlashCommand={handleSlashCommand}
           onStop={handleStopSession}
           onDeleteSession={handleDeleteSession}
-          onNavigateHome={() => dispatch(clearCurrentSession())}
+          onNavigateHome={() => coworkService.clearSession()}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={onToggleSidebar}
           onNewChat={onNewChat}
