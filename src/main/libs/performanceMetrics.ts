@@ -1,0 +1,304 @@
+import { performance } from 'perf_hooks';
+
+export type PerformanceTimingName =
+  | 'app_ready_ms'
+  | 'db_init_ms'
+  | 'window_created_ms'
+  | 'window_ready_to_show_ms'
+  | 'window_did_finish_load_ms'
+  | 'first_paint_ms'
+  | 'first_interactive_ms'
+  | 'config_loaded_ms'
+  | 'recent_sessions_loaded_ms'
+  | 'selected_engine_detect_ms'
+  | 'selected_engine_ready_ms'
+  | 'skills_ready_ms'
+  | 'mcp_ready_ms'
+  | 'im_ready_ms';
+
+export type IpcMetricType =
+  | 'message'
+  | 'messageUpdate'
+  | 'fileActivity'
+  | 'permission'
+  | 'complete'
+  | 'error';
+
+export type DbMetricOperation =
+  | 'getSession'
+  | 'listSessions'
+  | 'getConfig'
+  | 'setConfig'
+  | 'addMessage'
+  | 'updateMessage';
+
+export interface IpcMetricInput {
+  type: IpcMetricType;
+  sessionId?: string;
+  channel: string;
+  payload: unknown;
+  windowCount?: number;
+}
+
+export interface DbMetricInput {
+  operation: DbMetricOperation;
+  durationMs: number;
+  sessionId?: string;
+  messageCount?: number;
+  rowCount?: number;
+  detail?: string;
+}
+
+export interface PerformanceSnapshotMetadata {
+  appVersion?: string;
+  platform?: string;
+  arch?: string;
+}
+
+export interface DbSlowOperation extends DbMetricInput {
+  recordedAt: number;
+}
+
+export interface IpcSessionSummary {
+  sessionId: string;
+  eventCount: number;
+  maxEventsPerSecond: number;
+}
+
+export interface PerformanceSnapshot {
+  sampledAt: string;
+  uptimeMs: number;
+  metadata: PerformanceSnapshotMetadata;
+  startupTimings: Partial<Record<PerformanceTimingName, number>>;
+  ipc: {
+    totalEvents: number;
+    totalPayloadBytes: number;
+    maxPayloadBytes: number;
+    maxMessageUpdatePayloadBytes: number;
+    byType: Record<string, {
+      count: number;
+      payloadBytes: number;
+      maxPayloadBytes: number;
+      windowCount: number;
+    }>;
+    sessions: IpcSessionSummary[];
+  };
+  db: {
+    totalOperations: number;
+    slowThresholdMs: number;
+    slowOperations: DbSlowOperation[];
+    byOperation: Record<string, {
+      count: number;
+      totalDurationMs: number;
+      maxDurationMs: number;
+      slowCount: number;
+    }>;
+  };
+}
+
+const DEFAULT_DB_SLOW_THRESHOLD_MS = 100;
+const MAX_SLOW_DB_OPERATIONS = 200;
+const SESSION_RATE_WINDOW_MS = 1000;
+
+const processStartedAt = performance.now();
+const startupTimings: Partial<Record<PerformanceTimingName, number>> = {};
+const ipcByType = new Map<string, {
+  count: number;
+  payloadBytes: number;
+  maxPayloadBytes: number;
+  windowCount: number;
+}>();
+const ipcSessionWindows = new Map<string, number[]>();
+const dbByOperation = new Map<string, {
+  count: number;
+  totalDurationMs: number;
+  maxDurationMs: number;
+  slowCount: number;
+}>();
+const slowDbOperations: DbSlowOperation[] = [];
+
+let totalIpcEvents = 0;
+let totalIpcPayloadBytes = 0;
+let maxIpcPayloadBytes = 0;
+let maxMessageUpdatePayloadBytes = 0;
+let dbOperationCount = 0;
+let dbSlowThresholdMs = DEFAULT_DB_SLOW_THRESHOLD_MS;
+
+export function nowMs(): number {
+  return performance.now();
+}
+
+export function markTiming(name: PerformanceTimingName, startedAt: number = processStartedAt): number {
+  const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+  startupTimings[name] = durationMs;
+  console.debug(`[Performance] recorded ${name} in ${durationMs}ms`);
+  return durationMs;
+}
+
+export async function measureAsync<T>(
+  name: PerformanceTimingName,
+  task: () => Promise<T>,
+  startedAt: number = performance.now(),
+): Promise<T> {
+  try {
+    return await task();
+  } finally {
+    markTiming(name, startedAt);
+  }
+}
+
+export function getPayloadByteSize(payload: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+export function recordIpcSend(input: IpcMetricInput): void {
+  const payloadBytes = getPayloadByteSize(input.payload);
+  totalIpcEvents += 1;
+  totalIpcPayloadBytes += payloadBytes;
+  maxIpcPayloadBytes = Math.max(maxIpcPayloadBytes, payloadBytes);
+  if (input.type === 'messageUpdate') {
+    maxMessageUpdatePayloadBytes = Math.max(maxMessageUpdatePayloadBytes, payloadBytes);
+  }
+
+  const summary = ipcByType.get(input.type) ?? {
+    count: 0,
+    payloadBytes: 0,
+    maxPayloadBytes: 0,
+    windowCount: 0,
+  };
+  summary.count += 1;
+  summary.payloadBytes += payloadBytes;
+  summary.maxPayloadBytes = Math.max(summary.maxPayloadBytes, payloadBytes);
+  summary.windowCount += input.windowCount ?? 0;
+  ipcByType.set(input.type, summary);
+
+  if (input.sessionId) {
+    const now = Date.now();
+    const window = ipcSessionWindows.get(input.sessionId) ?? [];
+    window.push(now);
+    while (window.length > 0 && now - window[0] > SESSION_RATE_WINDOW_MS) {
+      window.shift();
+    }
+    ipcSessionWindows.set(input.sessionId, window);
+  }
+}
+
+export function recordDbOperation(input: DbMetricInput): void {
+  dbOperationCount += 1;
+  const summary = dbByOperation.get(input.operation) ?? {
+    count: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    slowCount: 0,
+  };
+  summary.count += 1;
+  summary.totalDurationMs += input.durationMs;
+  summary.maxDurationMs = Math.max(summary.maxDurationMs, input.durationMs);
+
+  if (input.durationMs >= dbSlowThresholdMs) {
+    summary.slowCount += 1;
+    const slowOperation: DbSlowOperation = {
+      ...input,
+      durationMs: Math.round(input.durationMs),
+      recordedAt: Date.now(),
+    };
+    slowDbOperations.push(slowOperation);
+    while (slowDbOperations.length > MAX_SLOW_DB_OPERATIONS) {
+      slowDbOperations.shift();
+    }
+    console.warn(
+      `[Performance] DB operation ${input.operation} took ${slowOperation.durationMs}ms.`,
+    );
+  }
+
+  dbByOperation.set(input.operation, summary);
+}
+
+export function measureDbOperation<T>(
+  operation: DbMetricOperation,
+  task: () => T,
+  context: Omit<DbMetricInput, 'operation' | 'durationMs'> = {},
+): T {
+  const startedAt = performance.now();
+  let result: T;
+  try {
+    result = task();
+  } finally {
+    recordDbOperation({
+      ...context,
+      operation,
+      durationMs: performance.now() - startedAt,
+    });
+  }
+  return result!;
+}
+
+export function setDbSlowThresholdForTesting(thresholdMs: number): void {
+  dbSlowThresholdMs = thresholdMs;
+}
+
+export function resetPerformanceMetricsForTesting(): void {
+  for (const key of Object.keys(startupTimings) as PerformanceTimingName[]) {
+    delete startupTimings[key];
+  }
+  ipcByType.clear();
+  ipcSessionWindows.clear();
+  dbByOperation.clear();
+  slowDbOperations.length = 0;
+  totalIpcEvents = 0;
+  totalIpcPayloadBytes = 0;
+  maxIpcPayloadBytes = 0;
+  maxMessageUpdatePayloadBytes = 0;
+  dbOperationCount = 0;
+  dbSlowThresholdMs = DEFAULT_DB_SLOW_THRESHOLD_MS;
+}
+
+export function getPerformanceSnapshot(
+  metadata: PerformanceSnapshotMetadata = {},
+): PerformanceSnapshot {
+  const byType: PerformanceSnapshot['ipc']['byType'] = {};
+  for (const [type, summary] of ipcByType.entries()) {
+    byType[type] = { ...summary };
+  }
+
+  const byOperation: PerformanceSnapshot['db']['byOperation'] = {};
+  for (const [operation, summary] of dbByOperation.entries()) {
+    byOperation[operation] = {
+      count: summary.count,
+      totalDurationMs: Math.round(summary.totalDurationMs),
+      maxDurationMs: Math.round(summary.maxDurationMs),
+      slowCount: summary.slowCount,
+    };
+  }
+
+  const sessions = Array.from(ipcSessionWindows.entries()).map(([sessionId, events]) => ({
+    sessionId,
+    eventCount: events.length,
+    maxEventsPerSecond: events.length,
+  }));
+
+  return {
+    sampledAt: new Date().toISOString(),
+    uptimeMs: Math.round(performance.now() - processStartedAt),
+    metadata,
+    startupTimings: { ...startupTimings },
+    ipc: {
+      totalEvents: totalIpcEvents,
+      totalPayloadBytes: totalIpcPayloadBytes,
+      maxPayloadBytes: maxIpcPayloadBytes,
+      maxMessageUpdatePayloadBytes,
+      byType,
+      sessions,
+    },
+    db: {
+      totalOperations: dbOperationCount,
+      slowThresholdMs: dbSlowThresholdMs,
+      slowOperations: [...slowDbOperations],
+      byOperation,
+    },
+  };
+}

@@ -671,6 +671,12 @@ interface IElectronAPI {
     getRuntimeMetricsSummary: (filters: RuntimeMetricsFilters) => Promise<{ success: boolean; summary?: RuntimeMetricsSummary; error?: string }>;
     listRuntimeCalls: (filters: RuntimeMetricsFilters) => Promise<{ success: boolean; total?: number; calls?: RuntimeCallRecord[]; error?: string }>;
     getRuntimeCallDetail: (callId: string) => Promise<{ success: boolean; call?: RuntimeCallRecord | null; error?: string }>;
+    reportRendererReady: (input: {
+      firstPaintMs?: number;
+      firstInteractiveMs?: number;
+      configLoadedMs?: number;
+      recentSessionsLoadedMs?: number;
+    }) => Promise<{ success: boolean }>;
     ensureStudioAssets: () => Promise<CoworkStudioAssetsResult>;
     installAgentCli: (appType: ExternalAgentProviderAppType) => Promise<ExternalAgentCliInstallResult>;
     listAgentProviders: (appType: ExternalAgentProviderAppType) => Promise<ExternalAgentProviderListResult>;

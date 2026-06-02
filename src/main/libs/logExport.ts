@@ -7,9 +7,15 @@ export type LogArchiveEntry = {
   filePath: string;
 };
 
+export type BufferArchiveEntry = {
+  archiveName: string;
+  buffer: Buffer;
+};
+
 export type ExportLogsZipInput = {
   outputPath: string;
   entries: LogArchiveEntry[];
+  bufferEntries?: BufferArchiveEntry[];
 };
 
 export type ExportLogsZipResult = {
@@ -56,6 +62,10 @@ export async function exportLogsZip(input: ExportLogsZipInput): Promise<ExportLo
     }
     missingEntries.push(entry.archiveName);
     zipFile.addBuffer(Buffer.alloc(0), entry.archiveName);
+  }
+
+  for (const entry of input.bufferEntries ?? []) {
+    zipFile.addBuffer(entry.buffer, entry.archiveName);
   }
 
   const outputStream = fs.createWriteStream(input.outputPath);

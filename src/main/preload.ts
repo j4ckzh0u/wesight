@@ -344,6 +344,13 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.RuntimeMetricsCalls, filters),
     getRuntimeCallDetail: (callId: string) =>
       ipcRenderer.invoke(CoworkIpcChannel.RuntimeMetricsDetail, { callId }),
+    reportRendererReady: (input: {
+      firstPaintMs?: number;
+      firstInteractiveMs?: number;
+      configLoadedMs?: number;
+      recentSessionsLoadedMs?: number;
+    }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.PerformanceRendererReady, input),
     ensureStudioAssets: () =>
       ipcRenderer.invoke(CoworkIpcChannel.StudioAssetsEnsure),
     installAgentCli: (appType: 'claude' | 'codex' | 'hermes' | 'openclaw' | 'opencode' | 'grok' | 'qwen' | 'deepseek_tui') =>

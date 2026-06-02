@@ -161,6 +161,12 @@ import {
   type OpenClawLocalFeishuDetection,
 } from './libs/openclawSystemRuntime';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
+import {
+  getPerformanceSnapshot,
+  markTiming,
+  nowMs,
+  recordIpcSend,
+} from './libs/performanceMetrics';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import {
   type RuntimeModelSnapshot,
@@ -768,6 +774,7 @@ const initStore = async (): Promise<SqliteStore> => {
     if (!app.isReady()) {
       throw new Error('Store accessed before app is ready.');
     }
+    const startedAt = nowMs();
     // better-sqlite3 opens the database synchronously, so Promise.resolve() resolves
     // immediately. The timeout acts as a safety net for future async changes or
     // unexpected OS-level blocking (e.g., file lock on startup).
@@ -776,7 +783,9 @@ const initStore = async (): Promise<SqliteStore> => {
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Store initialization timed out after 15s')), 15_000)
       ),
-    ]);
+    ]).finally(() => {
+      markTiming('db_init_ms', startedAt);
+    });
   }
   return storeInitPromise;
 };
@@ -1066,10 +1075,18 @@ const getCoworkFileActivityTracker = (): CoworkFileActivityTracker => {
       windows.forEach((win) => {
         if (win.isDestroyed()) return;
         try {
-          win.webContents.send(CoworkIpcChannel.StreamFileActivity, {
+          const payload = {
             sessionId: activity.sessionId,
             activity: safeActivity,
+          };
+          recordIpcSend({
+            type: 'fileActivity',
+            sessionId: activity.sessionId,
+            channel: CoworkIpcChannel.StreamFileActivity,
+            payload,
+            windowCount: 1,
           });
+          win.webContents.send(CoworkIpcChannel.StreamFileActivity, payload);
         } catch (error) {
           console.error('[CoworkFileActivity] failed to forward file activity:', error);
         }
@@ -1906,7 +1923,15 @@ const bindCoworkRuntimeForwarder = (): void => {
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
       try {
-        win.webContents.send('cowork:stream:message', { sessionId, message: safeMessage });
+        const payload = { sessionId, message: safeMessage };
+        recordIpcSend({
+          type: 'message',
+          sessionId,
+          channel: 'cowork:stream:message',
+          payload,
+          windowCount: 1,
+        });
+        win.webContents.send('cowork:stream:message', payload);
       } catch (error) {
         console.error('Failed to forward cowork message:', error);
       }
@@ -1921,7 +1946,15 @@ const bindCoworkRuntimeForwarder = (): void => {
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
       try {
-        win.webContents.send('cowork:stream:messageUpdate', { sessionId, messageId, content: safeContent });
+        const payload = { sessionId, messageId, content: safeContent };
+        recordIpcSend({
+          type: 'messageUpdate',
+          sessionId,
+          channel: 'cowork:stream:messageUpdate',
+          payload,
+          windowCount: 1,
+        });
+        win.webContents.send('cowork:stream:messageUpdate', payload);
       } catch (error) {
         console.error('Failed to forward cowork message update:', error);
       }
@@ -1938,7 +1971,15 @@ const bindCoworkRuntimeForwarder = (): void => {
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
       try {
-        win.webContents.send('cowork:stream:permission', { sessionId, request: safeRequest });
+        const payload = { sessionId, request: safeRequest };
+        recordIpcSend({
+          type: 'permission',
+          sessionId,
+          channel: 'cowork:stream:permission',
+          payload,
+          windowCount: 1,
+        });
+        win.webContents.send('cowork:stream:permission', payload);
       } catch (error) {
         console.error('Failed to forward cowork permission request:', error);
       }
@@ -1951,7 +1992,15 @@ const bindCoworkRuntimeForwarder = (): void => {
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
-      win.webContents.send('cowork:stream:complete', { sessionId, claudeSessionId });
+      const payload = { sessionId, claudeSessionId };
+      recordIpcSend({
+        type: 'complete',
+        sessionId,
+        channel: 'cowork:stream:complete',
+        payload,
+        windowCount: 1,
+      });
+      win.webContents.send('cowork:stream:complete', payload);
     });
     // If session used a server model, notify renderer to refresh quota
     try {
@@ -1976,7 +2025,15 @@ const bindCoworkRuntimeForwarder = (): void => {
     const windows = BrowserWindow.getAllWindows();
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
-      win.webContents.send('cowork:stream:error', { sessionId, error });
+      const payload = { sessionId, error };
+      recordIpcSend({
+        type: 'error',
+        sessionId,
+        channel: 'cowork:stream:error',
+        payload,
+        windowCount: 1,
+      });
+      win.webContents.send('cowork:stream:error', payload);
     });
   });
 
@@ -2164,6 +2221,7 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
   if (mcpBridgeStartPromise) {
     return mcpBridgeStartPromise;
   }
+  const mcpStartedAt = nowMs();
   mcpBridgeStartPromise = (async (): Promise<McpBridgeConfig | null> => {
   try {
     console.log('[McpBridge] startMcpBridge called');
@@ -2249,6 +2307,7 @@ const startMcpBridge = (): Promise<McpBridgeConfig | null> => {
     return null;
   }
   })().finally(() => {
+    markTiming('mcp_ready_ms', mcpStartedAt);
     mcpBridgeStartPromise = null;
   });
   return mcpBridgeStartPromise;
@@ -3295,6 +3354,14 @@ if (!gotTheLock) {
           ...getRecentMainLogEntries(),
           { archiveName: 'cowork.log', filePath: getCoworkLogPath() },
         ],
+        bufferEntries: [{
+          archiveName: 'performance-snapshot.json',
+          buffer: Buffer.from(JSON.stringify(getPerformanceSnapshot({
+            appVersion: app.getVersion(),
+            platform: process.platform,
+            arch: process.arch,
+          }), null, 2), 'utf8'),
+        }],
       });
 
       return {
@@ -4962,6 +5029,31 @@ if (!gotTheLock) {
         error: error instanceof Error ? error.message : 'Failed to load runtime call detail',
       };
     }
+  });
+
+  ipcMain.handle(CoworkIpcChannel.PerformanceRendererReady, async (_event, input: {
+    firstPaintMs?: unknown;
+    firstInteractiveMs?: unknown;
+    configLoadedMs?: unknown;
+    recentSessionsLoadedMs?: unknown;
+  }) => {
+    const firstPaintMs = Number(input?.firstPaintMs);
+    if (Number.isFinite(firstPaintMs) && firstPaintMs >= 0) {
+      markTiming('first_paint_ms', nowMs() - firstPaintMs);
+    }
+    const firstInteractiveMs = Number(input?.firstInteractiveMs);
+    if (Number.isFinite(firstInteractiveMs) && firstInteractiveMs >= 0) {
+      markTiming('first_interactive_ms', nowMs() - firstInteractiveMs);
+    }
+    const configLoadedMs = Number(input?.configLoadedMs);
+    if (Number.isFinite(configLoadedMs) && configLoadedMs >= 0) {
+      markTiming('config_loaded_ms', nowMs() - configLoadedMs);
+    }
+    const recentSessionsLoadedMs = Number(input?.recentSessionsLoadedMs);
+    if (Number.isFinite(recentSessionsLoadedMs) && recentSessionsLoadedMs >= 0) {
+      markTiming('recent_sessions_loaded_ms', nowMs() - recentSessionsLoadedMs);
+    }
+    return { success: true };
   });
 
   ipcMain.handle(CoworkIpcChannel.StudioAssetsEnsure, async () => {
@@ -6952,6 +7044,7 @@ if (!gotTheLock) {
 
   // 创建主窗口
   const createWindow = () => {
+    const windowCreateStartedAt = nowMs();
     // 如果窗口已经存在，就不再创建新窗口
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -7010,6 +7103,7 @@ if (!gotTheLock) {
 
     // 禁用窗口菜单
     mainWindow.setMenu(null);
+    markTiming('window_created_ms', windowCreateStartedAt);
 
     // 处理 window.open 请求（企微 SDK 授权弹窗等）
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -7059,6 +7153,7 @@ if (!gotTheLock) {
       clearTimeout(loadTimeout);
     });
     mainWindow.webContents.on('did-finish-load', () => {
+      markTiming('window_did_finish_load_ms', windowCreateStartedAt);
       emitWindowState();
       if (openClawEngineManager && !mainWindow?.isDestroyed()) {
         mainWindow.webContents.send('openclaw:engine:onProgress', openClawEngineManager.getStatus());
@@ -7141,6 +7236,7 @@ if (!gotTheLock) {
 
     // 等待内容加载完成后再显示窗口
     mainWindow.once('ready-to-show', () => {
+      markTiming('window_ready_to_show_ms', windowCreateStartedAt);
       emitWindowState();
       // 开机自启时不显示窗口，仅显示托盘图标
       if (!isAutoLaunched()) {
@@ -7288,6 +7384,7 @@ if (!gotTheLock) {
   const initApp = async () => {
     console.log('[Main] initApp: waiting for app.whenReady()');
     await app.whenReady();
+    markTiming('app_ready_ms');
     console.log('[Main] initApp: app is ready');
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
@@ -7527,8 +7624,12 @@ if (!gotTheLock) {
     if (!hermesStartupSync.success) {
       console.error('[Hermes] Startup config sync failed:', hermesStartupSync.error);
     }
-    if (isOpenClawCoworkAgentEngine(resolveCoworkAgentEngine())) {
+    const selectedEngineDetectStartedAt = nowMs();
+    const selectedEngine = resolveCoworkAgentEngine();
+    markTiming('selected_engine_detect_ms', selectedEngineDetectStartedAt);
+    if (isOpenClawCoworkAgentEngine(selectedEngine)) {
       void ensureOpenClawRunningForCowork().then(() => {
+        markTiming('selected_engine_ready_ms', selectedEngineDetectStartedAt);
         // Start cron polling once the gateway is confirmed running.
         try {
           getCronJobService().startPolling();
@@ -7538,9 +7639,12 @@ if (!gotTheLock) {
       }).catch((error) => {
         console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
       });
+    } else {
+      markTiming('selected_engine_ready_ms', selectedEngineDetectStartedAt);
     }
 
     console.log('[Main] initApp: setStoreGetter done');
+    const skillsStartedAt = nowMs();
     const manager = getSkillManager();
     console.log('[Main] initApp: getSkillManager done');
 
@@ -7594,9 +7698,13 @@ if (!gotTheLock) {
       console.log('[Main] initApp: skill services started');
     } catch (error) {
       console.error('[Main] initApp: skill services failed:', error);
+    } finally {
+      markTiming('skills_ready_ms', skillsStartedAt);
     }
 
+    const configLoadStartedAt = nowMs();
     const appConfig = getStore().get<AppConfigSettings>('app_config');
+    markTiming('config_loaded_ms', configLoadStartedAt);
     await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
 
     await startCoworkOpenAICompatProxy().catch((error) => {
@@ -7641,14 +7749,17 @@ if (!gotTheLock) {
     }
 
     // Auto-reconnect IM bots that were enabled before restart
+    const imStartedAt = nowMs();
     getIMGatewayManager().startAllEnabled()
       .then(() => {
+        markTiming('im_ready_ms', imStartedAt);
         if (resolveFeishuIMAgentEngine() === CoworkAgentEngineValue.Hermes) {
           startHermesIMSessionSyncPolling();
           void syncHermesIMSessionsToCowork('startup');
         }
       })
       .catch((error) => {
+        markTiming('im_ready_ms', imStartedAt);
         console.error('[IM] Failed to auto-start enabled gateways:', error);
       });
 

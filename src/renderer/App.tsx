@@ -170,6 +170,16 @@ const App: React.FC = () => {
 
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
+        window.requestAnimationFrame(() => {
+          const paintEntry = performance.getEntriesByType('paint')
+            .find((entry) => entry.name === 'first-paint');
+          void window.electron.cowork.reportRendererReady({
+            firstPaintMs: paintEntry ? Math.round(paintEntry.startTime) : undefined,
+            firstInteractiveMs: Math.round(performance.now()),
+          }).catch((error) => {
+            console.debug('[App] failed to report renderer performance metrics:', error);
+          });
+        });
 
         // 初始化定时任务服务，但不阻塞首屏
         void waitWithTimeout(scheduledTaskService.init(), 5000, 'scheduledTaskService.init').catch((error) => {

@@ -258,6 +258,7 @@ export const CoworkIpcChannel = {
   AgentCliInstallProgress: 'cowork:agentCli:installProgress',
   StudioAssetsEnsure: 'cowork:studioAssets:ensure',
   StreamFileActivity: 'cowork:stream:fileActivity',
+  PerformanceRendererReady: 'cowork:performance:rendererReady',
   RuntimeMetricsSummary: 'cowork:runtimeMetrics:summary',
   RuntimeMetricsCalls: 'cowork:runtimeMetrics:calls',
   RuntimeMetricsDetail: 'cowork:runtimeMetrics:detail',

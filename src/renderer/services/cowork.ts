@@ -261,6 +261,7 @@ class CoworkService {
   }
 
   async loadSessions(agentId?: string): Promise<void> {
+    const startedAt = performance.now();
     const requestId = ++this.latestLoadSessionsRequestId;
     await this.syncCodexAppTasksForCurrentConfig(agentId);
     const result = await window.electron?.cowork?.listSessions(agentId);
@@ -272,13 +273,20 @@ class CoworkService {
       }
       store.dispatch(setSessions(result.sessions));
     }
+    void window.electron?.cowork?.reportRendererReady?.({
+      recentSessionsLoadedMs: Math.round(performance.now() - startedAt),
+    })?.catch(() => {});
   }
 
   async loadConfig(): Promise<void> {
+    const startedAt = performance.now();
     const result = await window.electron?.cowork?.getConfig();
     if (result?.success && result.config) {
       store.dispatch(setConfig(result.config));
     }
+    void window.electron?.cowork?.reportRendererReady?.({
+      configLoadedMs: Math.round(performance.now() - startedAt),
+    })?.catch(() => {});
   }
 
   async loadOpenClawEngineStatus(): Promise<OpenClawEngineStatus | null> {

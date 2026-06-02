@@ -40,6 +40,11 @@ import {
   isQuestionLikeMemoryText,
 } from './libs/coworkMemoryExtractor';
 import { judgeMemoryCandidate } from './libs/coworkMemoryJudge';
+import {
+  measureDbOperation,
+  nowMs,
+  recordDbOperation,
+} from './libs/performanceMetrics';
 
 // Default working directory for new users
 const getDefaultWorkingDirectory = (): string => {
@@ -835,6 +840,8 @@ export class CoworkStore {
   }
 
   getSession(id: string): CoworkSession | null {
+    const startedAt = nowMs();
+    let messageCount: number | undefined;
     interface SessionRow {
       id: string;
       title: string;
@@ -855,49 +862,59 @@ export class CoworkStore {
       updated_at: number;
     }
 
-    const row = this.getOne<SessionRow>(
-      `
-      SELECT id, title, claude_session_id, codex_app_thread_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, session_kind, parent_session_id, team_id, runtime_snapshot_json, created_at, updated_at
-      FROM cowork_sessions
-      WHERE id = ?
-    `,
-      [id],
-    );
+    try {
+      const row = this.getOne<SessionRow>(
+        `
+        SELECT id, title, claude_session_id, codex_app_thread_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, session_kind, parent_session_id, team_id, runtime_snapshot_json, created_at, updated_at
+        FROM cowork_sessions
+        WHERE id = ?
+      `,
+        [id],
+      );
 
-    if (!row) return null;
+      if (!row) return null;
 
-    const messages = this.getSessionMessages(id);
+      const messages = this.getSessionMessages(id);
+      messageCount = messages.length;
 
-    let activeSkillIds: string[] = [];
-    if (row.active_skill_ids) {
-      try {
-        activeSkillIds = JSON.parse(row.active_skill_ids);
-      } catch (e) {
-        console.error('[CoworkStore] Failed to parse active_skill_ids for session', id, e);
-        activeSkillIds = [];
+      let activeSkillIds: string[] = [];
+      if (row.active_skill_ids) {
+        try {
+          activeSkillIds = JSON.parse(row.active_skill_ids);
+        } catch (e) {
+          console.error('[CoworkStore] Failed to parse active_skill_ids for session', id, e);
+          activeSkillIds = [];
+        }
       }
-    }
 
-    return {
-      id: row.id,
-      title: row.title,
-      claudeSessionId: row.claude_session_id,
-      codexAppThreadId: row.codex_app_thread_id || null,
-      status: row.status as CoworkSessionStatus,
-      pinned: Boolean(row.pinned),
-      cwd: row.cwd,
-      systemPrompt: row.system_prompt,
-      executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
-      activeSkillIds,
-      agentId: row.agent_id || 'main',
-      sessionKind: isCoworkSessionKind(row.session_kind) ? row.session_kind : CoworkSessionKind.Single,
-      parentSessionId: row.parent_session_id || null,
-      teamId: row.team_id || null,
-      runtimeSnapshot: parseRuntimeSnapshot(row.runtime_snapshot_json),
-      messages,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+      return {
+        id: row.id,
+        title: row.title,
+        claudeSessionId: row.claude_session_id,
+        codexAppThreadId: row.codex_app_thread_id || null,
+        status: row.status as CoworkSessionStatus,
+        pinned: Boolean(row.pinned),
+        cwd: row.cwd,
+        systemPrompt: row.system_prompt,
+        executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
+        activeSkillIds,
+        agentId: row.agent_id || 'main',
+        sessionKind: isCoworkSessionKind(row.session_kind) ? row.session_kind : CoworkSessionKind.Single,
+        parentSessionId: row.parent_session_id || null,
+        teamId: row.team_id || null,
+        runtimeSnapshot: parseRuntimeSnapshot(row.runtime_snapshot_json),
+        messages,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    } finally {
+      recordDbOperation({
+        operation: 'getSession',
+        durationMs: nowMs() - startedAt,
+        sessionId: id,
+        messageCount,
+      });
+    }
   }
 
   updateSession(
@@ -979,6 +996,8 @@ export class CoworkStore {
   }
 
   listSessions(agentId?: string): CoworkSessionSummary[] {
+    const startedAt = nowMs();
+    let rowCount: number | undefined;
     interface SessionSummaryRow {
       id: string;
       title: string;
@@ -1015,20 +1034,29 @@ export class CoworkStore {
       `);
     }
 
-    return rows.map(row => ({
-      id: row.id,
-      title: row.title,
-      codexAppThreadId: row.codex_app_thread_id || null,
-      status: row.status as CoworkSessionStatus,
-      pinned: Boolean(row.pinned),
-      agentId: row.agent_id || 'main',
-      sessionKind: isCoworkSessionKind(row.session_kind) ? row.session_kind : CoworkSessionKind.Single,
-      parentSessionId: row.parent_session_id || null,
-      teamId: row.team_id || null,
-      runtimeSnapshot: parseRuntimeSnapshot(row.runtime_snapshot_json),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
+    rowCount = rows.length;
+    try {
+      return rows.map(row => ({
+        id: row.id,
+        title: row.title,
+        codexAppThreadId: row.codex_app_thread_id || null,
+        status: row.status as CoworkSessionStatus,
+        pinned: Boolean(row.pinned),
+        agentId: row.agent_id || 'main',
+        sessionKind: isCoworkSessionKind(row.session_kind) ? row.session_kind : CoworkSessionKind.Single,
+        parentSessionId: row.parent_session_id || null,
+        teamId: row.team_id || null,
+        runtimeSnapshot: parseRuntimeSnapshot(row.runtime_snapshot_json),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    } finally {
+      recordDbOperation({
+        operation: 'listSessions',
+        durationMs: nowMs() - startedAt,
+        rowCount,
+      });
+    }
   }
 
   findSessionIdByCodexAppThreadId(threadId: string): string | null {
@@ -1133,42 +1161,44 @@ export class CoworkStore {
   }
 
   addMessage(sessionId: string, message: Omit<CoworkMessage, 'id' | 'timestamp'>): CoworkMessage {
-    const id = uuidv4();
-    const now = Date.now();
+    return measureDbOperation('addMessage', () => {
+      const id = uuidv4();
+      const now = Date.now();
 
-    const seqRow = this.db
-      .prepare(
-        'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
-      )
-      .get(sessionId) as { next_seq: number } | undefined;
-    const sequence = seqRow?.next_seq ?? 1;
+      const seqRow = this.db
+        .prepare(
+          'SELECT COALESCE(MAX(sequence), 0) + 1 as next_seq FROM cowork_messages WHERE session_id = ?',
+        )
+        .get(sessionId) as { next_seq: number } | undefined;
+      const sequence = seqRow?.next_seq ?? 1;
 
-    this.db
-      .prepare(
-        `
-      INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .run(
+      this.db
+        .prepare(
+          `
+        INSERT INTO cowork_messages (id, session_id, type, content, metadata, created_at, sequence)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+        )
+        .run(
+          id,
+          sessionId,
+          message.type,
+          message.content,
+          message.metadata ? JSON.stringify(message.metadata) : null,
+          now,
+          sequence,
+        );
+
+      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+
+      return {
         id,
-        sessionId,
-        message.type,
-        message.content,
-        message.metadata ? JSON.stringify(message.metadata) : null,
-        now,
-        sequence,
-      );
-
-    this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
-
-    return {
-      id,
-      type: message.type,
-      content: message.content,
-      timestamp: now,
-      metadata: message.metadata,
-    };
+        type: message.type,
+        content: message.content,
+        timestamp: now,
+        metadata: message.metadata,
+      };
+    }, { sessionId });
   }
 
   /**
@@ -1492,96 +1522,101 @@ export class CoworkStore {
     messageId: string,
     updates: { content?: string; metadata?: CoworkMessageMetadata },
   ): void {
-    const setClauses: string[] = [];
-    const values: (string | null)[] = [];
+    measureDbOperation('updateMessage', () => {
+      const setClauses: string[] = [];
+      const values: (string | null)[] = [];
 
-    if (updates.content !== undefined) {
-      setClauses.push('content = ?');
-      values.push(updates.content);
-    }
-    if (updates.metadata !== undefined) {
-      setClauses.push('metadata = ?');
-      values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
-    }
+      if (updates.content !== undefined) {
+        setClauses.push('content = ?');
+        values.push(updates.content);
+      }
+      if (updates.metadata !== undefined) {
+        setClauses.push('metadata = ?');
+        values.push(updates.metadata ? JSON.stringify(updates.metadata) : null);
+      }
 
-    if (setClauses.length === 0) return;
+      if (setClauses.length === 0) return;
 
-    values.push(messageId);
-    values.push(sessionId);
-    this.db
-      .prepare(
-        `
-      UPDATE cowork_messages
-      SET ${setClauses.join(', ')}
-      WHERE id = ? AND session_id = ?
-    `,
-      )
-      .run(...values);
+      values.push(messageId);
+      values.push(sessionId);
+      this.db
+        .prepare(
+          `
+        UPDATE cowork_messages
+        SET ${setClauses.join(', ')}
+        WHERE id = ? AND session_id = ?
+      `,
+        )
+        .run(...values);
+    }, { sessionId });
   }
 
   // Config operations
   getConfig(): CoworkConfig {
-    const configKeys = [
-      'workingDirectory',
-      'executionMode',
-      'agentEngine',
-      'openclawConfigSource',
-      'claudeCodeConfigSource',
-      'claudeCodePermissionMode',
-      'codexConfigSource',
-      'hermesConfigSource',
-      'opencodeConfigSource',
-      'opencodePermissionMode',
-      'qwenCodeConfigSource',
-      'qwenCodePermissionMode',
-      'deepseekTuiConfigSource',
-      'deepseekTuiPermissionMode',
-      'memoryEnabled',
-      'memoryImplicitUpdateEnabled',
-      'memoryLlmJudgeEnabled',
-      'memoryGuardLevel',
-      'memoryUserMemoriesMaxItems',
-    ] as const;
-    const configRows = this.getAll<{ key: string; value: string }>(
-      `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
-      [...configKeys],
-    );
-    const cfg = new Map(configRows.map(r => [r.key, r.value]));
+    return measureDbOperation('getConfig', () => {
+      const configKeys = [
+        'workingDirectory',
+        'executionMode',
+        'agentEngine',
+        'openclawConfigSource',
+        'claudeCodeConfigSource',
+        'claudeCodePermissionMode',
+        'codexConfigSource',
+        'hermesConfigSource',
+        'opencodeConfigSource',
+        'opencodePermissionMode',
+        'qwenCodeConfigSource',
+        'qwenCodePermissionMode',
+        'deepseekTuiConfigSource',
+        'deepseekTuiPermissionMode',
+        'memoryEnabled',
+        'memoryImplicitUpdateEnabled',
+        'memoryLlmJudgeEnabled',
+        'memoryGuardLevel',
+        'memoryUserMemoriesMaxItems',
+      ] as const;
+      const configRows = this.getAll<{ key: string; value: string }>(
+        `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
+        [...configKeys],
+      );
+      const cfg = new Map(configRows.map(r => [r.key, r.value]));
 
-    return {
-      workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
-      systemPrompt: getDefaultSystemPrompt(),
-      executionMode: 'local' as CoworkExecutionMode,
-      agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
-      openclawConfigSource: normalizeOpenClawConfigSource(cfg.get('openclawConfigSource')),
-      claudeCodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('claudeCodeConfigSource')),
-      claudeCodePermissionMode: normalizeClaudeCodePermissionMode(cfg.get('claudeCodePermissionMode')),
-      codexConfigSource: normalizeExternalAgentConfigSource(cfg.get('codexConfigSource')),
-      hermesConfigSource: normalizeHermesConfigSource(cfg.get('hermesConfigSource')),
-      opencodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('opencodeConfigSource')),
-      opencodePermissionMode: normalizeOpenCodePermissionMode(cfg.get('opencodePermissionMode')),
-      qwenCodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('qwenCodeConfigSource')),
-      qwenCodePermissionMode: normalizeQwenCodePermissionMode(cfg.get('qwenCodePermissionMode')),
-      deepseekTuiConfigSource: normalizeExternalAgentConfigSource(cfg.get('deepseekTuiConfigSource')),
-      deepseekTuiPermissionMode: normalizeDeepSeekTuiPermissionMode(cfg.get('deepseekTuiPermissionMode')),
-      memoryEnabled: parseBooleanConfig(cfg.get('memoryEnabled'), DEFAULT_MEMORY_ENABLED),
-      memoryImplicitUpdateEnabled: parseBooleanConfig(
-        cfg.get('memoryImplicitUpdateEnabled'),
-        DEFAULT_MEMORY_IMPLICIT_UPDATE_ENABLED,
-      ),
-      memoryLlmJudgeEnabled: parseBooleanConfig(
-        cfg.get('memoryLlmJudgeEnabled'),
-        DEFAULT_MEMORY_LLM_JUDGE_ENABLED,
-      ),
-      memoryGuardLevel: normalizeMemoryGuardLevel(cfg.get('memoryGuardLevel')),
-      memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(
-        Number(cfg.get('memoryUserMemoriesMaxItems')),
-      ),
-    };
+      return {
+        workingDirectory: cfg.get('workingDirectory') || getDefaultWorkingDirectory(),
+        systemPrompt: getDefaultSystemPrompt(),
+        executionMode: 'local' as CoworkExecutionMode,
+        agentEngine: normalizeCoworkAgentEngineValue(cfg.get('agentEngine')),
+        openclawConfigSource: normalizeOpenClawConfigSource(cfg.get('openclawConfigSource')),
+        claudeCodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('claudeCodeConfigSource')),
+        claudeCodePermissionMode: normalizeClaudeCodePermissionMode(cfg.get('claudeCodePermissionMode')),
+        codexConfigSource: normalizeExternalAgentConfigSource(cfg.get('codexConfigSource')),
+        hermesConfigSource: normalizeHermesConfigSource(cfg.get('hermesConfigSource')),
+        opencodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('opencodeConfigSource')),
+        opencodePermissionMode: normalizeOpenCodePermissionMode(cfg.get('opencodePermissionMode')),
+        qwenCodeConfigSource: normalizeExternalAgentConfigSource(cfg.get('qwenCodeConfigSource')),
+        qwenCodePermissionMode: normalizeQwenCodePermissionMode(cfg.get('qwenCodePermissionMode')),
+        deepseekTuiConfigSource: normalizeExternalAgentConfigSource(cfg.get('deepseekTuiConfigSource')),
+        deepseekTuiPermissionMode: normalizeDeepSeekTuiPermissionMode(cfg.get('deepseekTuiPermissionMode')),
+        memoryEnabled: parseBooleanConfig(cfg.get('memoryEnabled'), DEFAULT_MEMORY_ENABLED),
+        memoryImplicitUpdateEnabled: parseBooleanConfig(
+          cfg.get('memoryImplicitUpdateEnabled'),
+          DEFAULT_MEMORY_IMPLICIT_UPDATE_ENABLED,
+        ),
+        memoryLlmJudgeEnabled: parseBooleanConfig(
+          cfg.get('memoryLlmJudgeEnabled'),
+          DEFAULT_MEMORY_LLM_JUDGE_ENABLED,
+        ),
+        memoryGuardLevel: normalizeMemoryGuardLevel(cfg.get('memoryGuardLevel')),
+        memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(
+          Number(cfg.get('memoryUserMemoriesMaxItems')),
+        ),
+      };
+    });
   }
 
   setConfig(config: CoworkConfigUpdate): void {
-    const now = Date.now();
+    measureDbOperation('setConfig', () => {
+      const now = Date.now();
 
     if (config.workingDirectory !== undefined) {
       this.db
@@ -1836,19 +1871,20 @@ export class CoworkStore {
         .run(normalizeMemoryGuardLevel(config.memoryGuardLevel), now);
     }
 
-    if (config.memoryUserMemoriesMaxItems !== undefined) {
-      this.db
-        .prepare(
-          `
-        INSERT INTO cowork_config (key, value, updated_at)
-        VALUES ('memoryUserMemoriesMaxItems', ?, ?)
-        ON CONFLICT(key) DO UPDATE SET
-          value = excluded.value,
-          updated_at = excluded.updated_at
-      `,
-        )
-        .run(String(clampMemoryUserMemoriesMaxItems(config.memoryUserMemoriesMaxItems)), now);
-    }
+      if (config.memoryUserMemoriesMaxItems !== undefined) {
+        this.db
+          .prepare(
+            `
+          INSERT INTO cowork_config (key, value, updated_at)
+          VALUES ('memoryUserMemoriesMaxItems', ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        `,
+          )
+          .run(String(clampMemoryUserMemoriesMaxItems(config.memoryUserMemoriesMaxItems)), now);
+      }
+    });
   }
 
   getAppLanguage(): 'zh' | 'en' {
