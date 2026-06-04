@@ -75,7 +75,7 @@ const createOpenAICompatAppConfig = () => ({
 });
 
 const createSessionStore = () => ({
-  'agent:main:lobsterai:current-session': {
+  'agent:main:wesight:current-session': {
     sessionId: 'session-current',
     modelProvider: 'lobster',
     model: 'kimi-k2.5',
@@ -84,7 +84,7 @@ const createSessionStore = () => ({
       model: 'kimi-k2.5',
     },
   },
-  'agent:main:lobsterai:old-claude-session': {
+  'agent:main:wesight:old-claude-session': {
     sessionId: 'session-old-claude',
     modelProvider: 'lobster',
     model: 'claude-sonnet-4-5-20250929',
@@ -173,15 +173,15 @@ test('sync writes native moonshot provider config and migrates matching managed 
   assert.equal(config.browser.enabled, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].modelProvider, 'moonshot');
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].model, 'kimi-k2.5');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].modelProvider, 'moonshot');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].model, 'kimi-k2.5');
   assert.equal(
-    sessionStore['agent:main:lobsterai:current-session'].systemPromptReport.provider,
+    sessionStore['agent:main:wesight:current-session'].systemPromptReport.provider,
     'moonshot',
   );
-  assert.equal(sessionStore['agent:main:lobsterai:old-claude-session'].modelProvider, 'lobster');
+  assert.equal(sessionStore['agent:main:wesight:old-claude-session'].modelProvider, 'lobster');
   assert.equal(
-    sessionStore['agent:main:lobsterai:old-claude-session'].model,
+    sessionStore['agent:main:wesight:old-claude-session'].model,
     'claude-sonnet-4-5-20250929',
   );
   assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'full');
@@ -215,14 +215,14 @@ test('sync maps moonshot coding plan sessions to kimi-coding model refs', t => {
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client', '*']);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].modelProvider, 'moonshot');
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].model, 'kimi-k2.5');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].modelProvider, 'moonshot');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].model, 'kimi-k2.5');
   assert.equal(
-    sessionStore['agent:main:lobsterai:current-session'].systemPromptReport.provider,
+    sessionStore['agent:main:wesight:current-session'].systemPromptReport.provider,
     'moonshot',
   );
   assert.equal(
-    sessionStore['agent:main:lobsterai:current-session'].systemPromptReport.model,
+    sessionStore['agent:main:wesight:current-session'].systemPromptReport.model,
     'kimi-k2.5',
   );
   assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'full');
@@ -251,8 +251,8 @@ test('sync denies exec for native channel sessions even without provider migrati
   assert.equal(result.changed, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].modelProvider, 'openai');
-  assert.equal(sessionStore['agent:main:lobsterai:current-session'].model, 'kimi-k2.5');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].modelProvider, 'openai');
+  assert.equal(sessionStore['agent:main:wesight:current-session'].model, 'kimi-k2.5');
   assert.equal(sessionStore['agent:main:wecom:direct:wangning'].execSecurity, 'full');
   assert.equal(sessionStore['agent:main:feishu:dm:ou_123'].execSecurity, 'full');
   assert.equal('skillsSnapshot' in sessionStore['agent:main:wecom:direct:wangning'], false);
@@ -341,7 +341,7 @@ test('sync backfills the default OpenClaw AGENTS template when an old workspace 
   fs.writeFileSync(
     path.join(workspaceDir, 'AGENTS.md'),
     [
-      '<!-- LobsterAI managed: do not edit below this line -->',
+      '<!-- WeSight managed: do not edit below this line -->',
       '',
       '## System Prompt',
       '',

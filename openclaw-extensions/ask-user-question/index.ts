@@ -138,12 +138,11 @@ const plugin = {
     // Use a factory so the tool is only available for desktop (webchat) sessions.
     // IM channel sessions (qqbot, dingtalk, weixin, feishu, etc.) get null → tool hidden.
     api.registerTool((ctx) => {
-      // Only enable for WeSight desktop sessions. Legacy session keys remain supported.
+      // Only enable for WeSight desktop sessions.
       // IM channel sessions (dingtalk, qqbot, weixin, feishu, wecom, etc.) should not have this tool
       // so the model executes delete commands directly without confirmation on IM.
       const sessionKey = ctx.sessionKey ?? '';
-      const isLocalDesktop = sessionKey.startsWith('agent:main:wesight:')
-        || sessionKey.startsWith('agent:main:lobsterai:');
+      const isLocalDesktop = sessionKey.startsWith('agent:main:wesight:');
       if (!isLocalDesktop) {
         return null;
       }

@@ -521,8 +521,8 @@ const enableVerboseLogging =
   process.env.ELECTRON_ENABLE_LOGGING === '1' ||
   process.env.ELECTRON_ENABLE_LOGGING === 'true';
 const disableGpu =
-  process.env.LOBSTERAI_DISABLE_GPU === '1' ||
-  process.env.LOBSTERAI_DISABLE_GPU === 'true' ||
+  process.env.WESIGHT_DISABLE_GPU === '1' ||
+  process.env.WESIGHT_DISABLE_GPU === 'true' ||
   process.env.ELECTRON_DISABLE_GPU === '1' ||
   process.env.ELECTRON_DISABLE_GPU === 'true';
 const reloadOnChildProcessGone =

@@ -164,7 +164,7 @@ const providerApiKeyEnvVar = (providerName: string): string => {
 const API_KEY_PLACEHOLDER_PATTERN = /\$\{((?:WESIGHT|LOBSTER)_APIKEY_[A-Z0-9_]+)\}/g;
 const MANAGED_AGENTS_MARKER = '<!-- WeSight managed: do not edit below this line -->';
 const LEGACY_MANAGED_AGENTS_MARKERS = [
-  '<!-- LobsterAI managed: do not edit below this line -->',
+  '<!-- WeSight managed: do not edit below this line -->',
 ] as const;
 const ALL_MANAGED_AGENTS_MARKERS = [MANAGED_AGENTS_MARKER, ...LEGACY_MANAGED_AGENTS_MARKERS] as const;
 
@@ -1839,7 +1839,7 @@ export class OpenClawConfigSync {
         }
       }
 
-      if (!shouldMigrateManagedModelRefs || !(/^agent:[^:]+:(?:wesight|lobsterai):/.test(sessionKey))) {
+      if (!shouldMigrateManagedModelRefs || !(/^agent:[^:]+:wesight:/.test(sessionKey))) {
         continue;
       }
 
