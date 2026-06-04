@@ -36,6 +36,7 @@ import type { CoworkSessionRuntimeSnapshot } from '../shared/cowork/runtimeSnaps
 import {
   type AppendRuntimeEventInput,
   CoworkEventStore,
+  ensureCoworkEventSchema,
   type RuntimeEvent,
   RuntimeEventType,
 } from './coworkEventStore';
@@ -793,6 +794,7 @@ export class CoworkStore {
 
   constructor(db: Database.Database) {
     this.db = db;
+    ensureCoworkEventSchema(db);
     this.eventStore = new CoworkEventStore(db);
   }
 

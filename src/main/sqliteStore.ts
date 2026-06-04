@@ -7,6 +7,7 @@ import path from 'path';
 
 import { CoworkAgentEngine, DefaultCoworkAgentEngine } from '../shared/cowork/constants';
 import { DB_FILENAME } from './appConstants';
+import { ensureCoworkEventSchema } from './coworkEventStore';
 
 type ChangePayload<T = unknown> = {
   key: string;
@@ -101,29 +102,7 @@ export class SqliteStore {
       ON cowork_messages(session_id, sequence);
     `);
 
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS cowork_events (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        source_event_id TEXT,
-        type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE,
-        UNIQUE (source, source_event_id)
-      );
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_events_session_created
-      ON cowork_events(session_id, created_at, id);
-    `);
-
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_cowork_events_type_created
-      ON cowork_events(type, created_at);
-    `);
+    ensureCoworkEventSchema(this.db);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS cowork_runtime_calls (
