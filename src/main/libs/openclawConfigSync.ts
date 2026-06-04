@@ -4,6 +4,7 @@ import path from 'path';
 
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import { ExternalAgentConfigSource } from '../../shared/cowork/constants';
+import { WeixinOwnership } from '../../shared/im/constants';
 import { PlatformRegistry } from '../../shared/platform';
 import { OpenClawApi as OpenClawApiConst,OpenClawProviderId, ProviderName } from '../../shared/providers';
 import type { Agent,CoworkConfig, CoworkExecutionMode } from '../coworkStore';
@@ -1045,6 +1046,7 @@ export class OpenClawConfigSync {
     const neteaseBeeChanConfig = this.getNeteaseBeeChanConfig();
 
     const weixinConfig = this.getWeixinConfig();
+    const weixinOwnedByOpenClaw = this.getIMSettings?.()?.weixinOwnership === WeixinOwnership.LocalOpenClaw;
 
     const hasAnyChannel = hasDingTalkOpenClaw || feishuInstances.some(i => i.enabled && i.appId);
 
@@ -1129,7 +1131,7 @@ export class OpenClawConfigSync {
                 if (id === 'moltbot-popo') return !!(popoConfig?.enabled && popoConfig.appKey);
                 if (id === 'nim') return !!(nimConfig?.enabled && nimConfig.appKey && nimConfig.account && nimConfig.token);
                 if (id === 'openclaw-netease-bee') return !!(neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret);
-                if (id === 'openclaw-weixin') return true; // Always keep enabled for QR login discovery
+                if (id === 'openclaw-weixin') return weixinOwnedByOpenClaw && !!(weixinConfig?.enabled);
                 return true; // other plugins stay enabled
               })();
               return [id, { enabled: pluginEnabled }];
@@ -1461,7 +1463,7 @@ export class OpenClawConfigSync {
     // Sync Weixin OpenClaw channel config (via openclaw-weixin plugin)
     // Always write the channel entry — use enabled:false when disabled so the
     // Gateway stops the channel instead of falling back to plugin defaults.
-    const weixinChannelEnabled = !!(weixinConfig?.enabled);
+    const weixinChannelEnabled = weixinOwnedByOpenClaw && !!(weixinConfig?.enabled);
     const weixinChannel: Record<string, unknown> = {
       enabled: weixinChannelEnabled,
       ...(weixinConfig?.accountId ? { accountId: weixinConfig.accountId } : {}),
@@ -2099,6 +2101,7 @@ export class OpenClawConfigSync {
     }
 
     // Handle single-instance platforms
+    const weixinOwnedByOpenClaw = this.getIMSettings?.()?.weixinOwnership === WeixinOwnership.LocalOpenClaw;
     const singleInstanceChannels: Array<{ getter: () => { enabled: boolean } | null; channel: string; platform: string }> = [
       { getter: () => this.getTelegramOpenClawConfig?.() ?? null, channel: 'telegram', platform: 'telegram' },
       { getter: () => this.getDiscordOpenClawConfig?.() ?? null, channel: 'discord', platform: 'discord' },
@@ -2106,7 +2109,9 @@ export class OpenClawConfigSync {
       { getter: () => this.getPopoConfig(), channel: 'moltbot-popo', platform: 'popo' },
       { getter: () => this.getNimConfig(), channel: 'nim', platform: 'nim' },
       { getter: () => this.getNeteaseBeeChanConfig(), channel: 'netease-bee', platform: 'netease-bee' },
-      { getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' },
+      ...(weixinOwnedByOpenClaw
+        ? [{ getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' }]
+        : []),
     ];
 
     for (const { getter, channel, platform } of singleInstanceChannels) {

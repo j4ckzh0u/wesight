@@ -17,6 +17,8 @@ import {
   type FeishuManagementModeType,
   FeishuRuntimeOwnership,
   type FeishuRuntimeOwnershipType,
+  WeixinOwnership,
+  type WeixinOwnershipType,
 } from '../../shared/im/constants';
 import type { CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
@@ -40,6 +42,7 @@ import type {
 import { createIMScheduledTaskRequestDetector } from './imScheduledTaskHandler';
 import { IMStore } from './imStore';
 import { NativeFeishuGateway } from './nativeFeishuGateway';
+import { NativeWeixinGateway } from './nativeWeixinGateway';
 import { NimGateway } from './nimGateway';
 import {
   FeishuRuntimeOwnershipStatus,
@@ -123,6 +126,7 @@ export interface IMGatewayManagerOptions {
 export class IMGatewayManager extends EventEmitter {
   private nimGateway: NimGateway;
   private nativeFeishuGateway: NativeFeishuGateway;
+  private nativeWeixinGateway: NativeWeixinGateway;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -171,6 +175,7 @@ export class IMGatewayManager extends EventEmitter {
     this.imStore = new IMStore(db);
     this.nimGateway = new NimGateway();
     this.nativeFeishuGateway = new NativeFeishuGateway();
+    this.nativeWeixinGateway = new NativeWeixinGateway();
 
     // Store Cowork dependencies if provided
     if (options?.coworkRuntime && options?.coworkStore) {
@@ -213,7 +218,7 @@ export class IMGatewayManager extends EventEmitter {
 
     // WeCom runs via OpenClaw; no direct gateway events to forward
 
-    // Weixin runs via OpenClaw; no direct gateway events to forward
+    // Weixin uses either the native WeSight gateway or the local OpenClaw plugin.
 
     // POPO runs via OpenClaw; no direct gateway events to forward
   }
@@ -240,6 +245,14 @@ export class IMGatewayManager extends EventEmitter {
     if (engine === CoworkAgentEngine.ClaudeCode) return FeishuEngineKey.ClaudeCode;
     if (engine === CoworkAgentEngine.Codex) return FeishuEngineKey.Codex;
     return FeishuEngineKey.OpenClaw;
+  }
+
+  private resolveWeixinOwnership(): WeixinOwnershipType {
+    return this.imStore.getIMSettings().weixinOwnership ?? WeixinOwnership.WesightManaged;
+  }
+
+  private isWeixinWesightManaged(): boolean {
+    return this.resolveWeixinOwnership() === WeixinOwnership.WesightManaged;
   }
 
   getActiveFeishuEngineKey(): FeishuEngineKeyType {
@@ -288,7 +301,10 @@ export class IMGatewayManager extends EventEmitter {
 
     // WeCom runs via OpenClaw; no direct reconnection needed
 
-    // Weixin runs via OpenClaw; no direct reconnection needed
+    if (this.isWeixinWesightManaged()) {
+      void this.nativeWeixinGateway.start(this.getConfig().weixin)
+        .catch(error => console.error('[IMGatewayManager] Failed to reconnect native Weixin gateway:', error));
+    }
 
     // POPO runs via OpenClaw; no direct reconnection needed
   }
@@ -361,6 +377,7 @@ export class IMGatewayManager extends EventEmitter {
 
     this.nimGateway.setMessageCallback(messageHandler);
     this.nativeFeishuGateway.setMessageCallback(messageHandler);
+    this.nativeWeixinGateway.setMessageCallback(messageHandler);
   }
 
   /**
@@ -373,7 +390,7 @@ export class IMGatewayManager extends EventEmitter {
         target = this.nimGateway.getNotificationTarget();
       }
       // WeCom runs via OpenClaw; notification target not managed locally
-      // Weixin runs via OpenClaw; notification target not managed locally
+      // Weixin notification target is derived from the current message route.
       // POPO runs via OpenClaw; notification target not managed locally
       if (target != null) {
         this.imStore.setNotificationTarget(platform, target);
@@ -395,7 +412,7 @@ export class IMGatewayManager extends EventEmitter {
         this.nimGateway.setNotificationTarget(target);
       }
       // WeCom runs via OpenClaw; notification target not managed locally
-      // Weixin runs via OpenClaw; notification target not managed locally
+      // Weixin notification target is derived from the current message route.
       // POPO runs via OpenClaw; notification target not managed locally
       console.log(`[IMGatewayManager] Restored notification target for ${platform}`);
     } catch (err: any) {
@@ -660,11 +677,19 @@ export class IMGatewayManager extends EventEmitter {
         lastOutboundAt: null as number | null,
       },
       weixin: {
-        connected: Boolean(config.weixin?.enabled && config.weixin?.accountId),
-        startedAt: null as number | null,
-        lastError: null as string | null,
-        lastInboundAt: null as number | null,
-        lastOutboundAt: null as number | null,
+        ...(
+          this.isWeixinWesightManaged()
+            ? this.nativeWeixinGateway.getStatus(config.weixin)
+            : {
+                connected: Boolean(config.weixin?.enabled && config.weixin?.accountId),
+                startedAt: null as number | null,
+                lastError: null as string | null,
+                lastInboundAt: null as number | null,
+                lastOutboundAt: null as number | null,
+                accountId: config.weixin?.accountId || null,
+              }
+        ),
+        ownership: this.resolveWeixinOwnership(),
       },
       popo: {
         connected: Boolean(config.popo?.enabled && config.popo.appKey && config.popo.appSecret && config.popo.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)),
@@ -731,9 +756,10 @@ export class IMGatewayManager extends EventEmitter {
       return this.testWecomOpenClawConnectivity(configOverride);
     }
 
-    // Weixin always uses OpenClaw mode
     if (platform === 'weixin') {
-      return this.testWeixinOpenClawConnectivity(configOverride);
+      return this.isWeixinWesightManaged()
+        ? this.testWeixinNativeConnectivity(configOverride)
+        : this.testWeixinOpenClawConnectivity(configOverride);
     }
 
     // POPO always uses OpenClaw mode
@@ -1000,10 +1026,16 @@ export class IMGatewayManager extends EventEmitter {
       await this.ensureOpenClawGatewayConnected?.();
       return;
     } else if (platform === 'weixin') {
-      // Weixin runs via OpenClaw gateway (weixin-openclaw-plugin)
-      console.debug('[IMGatewayManager] Weixin in OpenClaw mode, syncing config instead of starting direct gateway');
-      await this.syncOpenClawConfig?.();
-      await this.ensureOpenClawGatewayConnected?.();
+      if (this.isWeixinWesightManaged()) {
+        console.log('[IMGatewayManager] Weixin uses WeSight managed gateway');
+        await this.syncOpenClawConfig?.();
+        await this.nativeWeixinGateway.start(this.getConfig().weixin);
+      } else {
+        console.debug('[IMGatewayManager] Weixin uses local OpenClaw gateway');
+        await this.nativeWeixinGateway.stop();
+        await this.syncOpenClawConfig?.();
+        await this.ensureOpenClawGatewayConnected?.();
+      }
       return;
     } else if (platform === 'popo') {
       // POPO runs via OpenClaw gateway (moltbot-popo plugin)
@@ -1077,8 +1109,8 @@ export class IMGatewayManager extends EventEmitter {
       await this.syncOpenClawConfig?.();
       return;
     } else if (platform === 'weixin') {
-      // Weixin runs via OpenClaw gateway
-      console.debug('[IMGatewayManager] Weixin in OpenClaw mode, syncing disabled config');
+      await this.nativeWeixinGateway.stop();
+      console.debug('[IMGatewayManager] Weixin gateway stopped');
       await this.syncOpenClawConfig?.();
       return;
     } else if (platform === 'popo') {
@@ -1166,7 +1198,19 @@ export class IMGatewayManager extends EventEmitter {
       openClawPlatformsToStart.push('wecom');
     }
     if (config.weixin?.enabled) {
-      openClawPlatformsToStart.push('weixin');
+      if (this.isWeixinWesightManaged()) {
+        try {
+          await this.nativeWeixinGateway.start(config.weixin);
+          await this.syncOpenClawConfig?.();
+        } catch (error: any) {
+          console.error(`[IMGatewayManager] Failed to start Weixin native gateway: ${error.message}`);
+        }
+      } else {
+        await this.nativeWeixinGateway.stop();
+        openClawPlatformsToStart.push('weixin');
+      }
+    } else {
+      await this.nativeWeixinGateway.stop();
     }
     if (config.popo?.enabled && config.popo?.appKey && config.popo?.appSecret && config.popo?.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)) {
       openClawPlatformsToStart.push('popo');
@@ -1191,10 +1235,11 @@ export class IMGatewayManager extends EventEmitter {
 
   async stopAll(): Promise<void> {
     await this.nativeFeishuGateway.stopAll();
+    await this.nativeWeixinGateway.stop();
   }
 
   isAnyConnected(): boolean {
-    return this.nativeFeishuGateway.isConnected();
+    return this.nativeFeishuGateway.isConnected() || this.nativeWeixinGateway.isConnected();
   }
 
   isConnected(platform: Platform): boolean {
@@ -1248,6 +1293,9 @@ export class IMGatewayManager extends EventEmitter {
       return Boolean(config.wecom?.enabled && config.wecom.botId && config.wecom.secret);
     }
     if (platform === 'weixin') {
+      if (this.isWeixinWesightManaged()) {
+        return this.nativeWeixinGateway.isConnected();
+      }
       const config = this.getConfig();
       return Boolean(config.weixin?.enabled && config.weixin?.accountId);
     }
@@ -2033,11 +2081,65 @@ export class IMGatewayManager extends EventEmitter {
     return { platform, testedAt, verdict, checks };
   }
 
+  private async testWeixinNativeConnectivity(
+    configOverride?: Partial<IMGatewayConfig>
+  ): Promise<IMConnectivityTestResult> {
+    const checks: IMConnectivityCheck[] = [];
+    const testedAt = Date.now();
+    const platform: Platform = 'weixin';
+    const mergedConfig = this.buildMergedConfig(configOverride);
+    const wxConfig = mergedConfig.weixin;
+
+    if (!wxConfig?.enabled) {
+      checks.push({
+        code: 'gateway_running',
+        level: 'info',
+        message: t('imWeixinNotEnabled'),
+        suggestion: t('imWeixinEnableSuggestion'),
+      });
+      return { platform, testedAt, verdict: 'pass', checks };
+    }
+
+    if (!wxConfig.accountId) {
+      checks.push({
+        code: 'auth_check',
+        level: 'warn',
+        message: t('imWeixinQrRequired'),
+        suggestion: t('imWeixinScanSuggestion'),
+      });
+    } else {
+      checks.push({
+        code: 'auth_check',
+        level: 'pass',
+        message: t('imWeixinNativeReady', { accountId: wxConfig.accountId }),
+      });
+    }
+
+    checks.push({
+      code: 'gateway_running',
+      level: this.nativeWeixinGateway.isConnected() ? 'pass' : 'info',
+      message: this.nativeWeixinGateway.isConnected()
+        ? t('imWeixinNativeRunning')
+        : t('imWeixinNativeManagedHint'),
+    });
+
+    const verdict: IMConnectivityVerdict = checks.some(c => c.level === 'fail')
+      ? 'fail'
+      : checks.some(c => c.level === 'warn')
+        ? 'warn'
+        : 'pass';
+
+    return { platform, testedAt, verdict, checks };
+  }
+
   /**
-   * Start Weixin QR code login via OpenClaw Gateway RPC.
+   * Start Weixin QR code login.
    * Returns the QR code data URL and a session key for polling.
    */
   async weixinQrLoginStart(): Promise<{ qrDataUrl?: string; message: string; sessionKey?: string }> {
+    if (this.isWeixinWesightManaged()) {
+      return this.nativeWeixinGateway.qrLoginStart(this.getConfig().weixin?.accountId);
+    }
     const client = this.getOpenClawGatewayClient?.();
     if (!client) {
       await this.ensureOpenClawGatewayReady?.();
@@ -2065,9 +2167,22 @@ export class IMGatewayManager extends EventEmitter {
   }
 
   /**
-   * Wait for Weixin QR code scan completion via OpenClaw Gateway RPC.
+   * Wait for Weixin QR code scan completion.
    */
   async weixinQrLoginWait(accountId?: string): Promise<{ connected: boolean; message: string; accountId?: string }> {
+    if (this.isWeixinWesightManaged()) {
+      const config = this.getConfig().weixin;
+      const result = await this.nativeWeixinGateway.qrLoginWait(accountId || '', config);
+      if (result.connected && result.accountId) {
+        this.imStore.setWeixinConfig({
+          ...config,
+          enabled: true,
+          accountId: result.accountId,
+        });
+        await this.syncOpenClawConfig?.();
+      }
+      return result;
+    }
     const client = this.getOpenClawGatewayClient?.();
     if (!client) {
       return { connected: false, message: 'OpenClaw Gateway is not connected.' };
@@ -2484,6 +2599,9 @@ export class IMGatewayManager extends EventEmitter {
     try {
       if (platform === 'feishu' && isNativeFeishuCliEngine(this.getFeishuAgentEngine?.() ?? null)) {
         return this.nativeFeishuGateway.sendConversationReply(conversationId, text);
+      }
+      if (platform === 'weixin' && this.isWeixinWesightManaged()) {
+        return this.nativeWeixinGateway.sendConversationReply(conversationId, text);
       }
       switch (platform) {
         default:

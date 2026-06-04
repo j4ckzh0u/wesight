@@ -7,7 +7,7 @@ import { EyeIcon, EyeSlashIcon, XCircleIcon as XCircleIconSolid } from '@heroico
 import { CheckCircleIcon, ExclamationTriangleIcon, SignalIcon, XCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { CoworkAgentEngine } from '@shared/cowork/constants';
-import { FEISHU_ENGINE_KEYS, FeishuEngineKey, type FeishuEngineKeyType, FeishuManagementMode, FeishuRuntimeOwnership } from '@shared/im/constants';
+import { FEISHU_ENGINE_KEYS, FeishuEngineKey, type FeishuEngineKeyType, FeishuManagementMode, FeishuRuntimeOwnership, WeixinOwnership, type WeixinOwnershipType } from '@shared/im/constants';
 import type { Platform } from '@shared/platform';
 import { PlatformRegistry } from '@shared/platform';
 import WecomAIBotSDK from '@wecom/wecom-aibot-sdk';
@@ -125,9 +125,25 @@ const feishuEngineLabel = (engineKey: FeishuEngineKeyType): string => {
   return i18nService.t('imFeishuAgentEngineOpenClaw');
 };
 
+const agentEngineLabel = (engine: CoworkAgentEngine): string => {
+  switch (engine) {
+    case CoworkAgentEngine.Hermes:
+      return i18nService.t('coworkAgentEngineHermes');
+    case CoworkAgentEngine.ClaudeCode:
+      return i18nService.t('coworkAgentEngineClaudeCode');
+    case CoworkAgentEngine.Codex:
+      return i18nService.t('coworkAgentEngineCodex');
+    case CoworkAgentEngine.OpenClaw:
+      return i18nService.t('coworkAgentEngineOpenClaw');
+    default:
+      return i18nService.t('coworkAgentEngineClaudeLegacy');
+  }
+};
+
 const IMSettings: React.FC = () => {
   const dispatch = useDispatch();
   const { config, status, isLoading, error } = useSelector((state: RootState) => state.im);
+  const agents = useSelector((state: RootState) => state.agent.agents);
   const coworkConfig = useSelector((state: RootState) => state.cowork.config);
   const [activePlatform, setActivePlatform] = useState<Platform>('weixin');
   const [activeQQInstanceId, setActiveQQInstanceId] = useState<string | null>(null);
@@ -471,6 +487,35 @@ const IMSettings: React.FC = () => {
 
   // Handle Weixin OpenClaw config
   const weixinOpenClawConfig = config.weixin;
+  const weixinOwnership = config.settings?.weixinOwnership ?? WeixinOwnership.WesightManaged;
+  const weixinAgentBinding = config.settings?.platformAgentBindings?.weixin ?? 'main';
+  const enabledAgents = useMemo(() => agents.filter(agent => agent.enabled), [agents]);
+  const selectedWeixinAgent = enabledAgents.find(agent => `agent:${agent.id}` === weixinAgentBinding);
+  const handleWeixinAgentBindingChange = async (value: string) => {
+    const currentSettings = config.settings;
+    const nextBindings = {
+      ...(currentSettings.platformAgentBindings ?? {}),
+    };
+    if (value === 'main') {
+      delete nextBindings.weixin;
+    } else {
+      nextBindings.weixin = value;
+    }
+    await imService.updateConfig({
+      settings: {
+        ...currentSettings,
+        platformAgentBindings: nextBindings,
+      },
+    });
+  };
+  const handleWeixinOwnershipChange = async (value: WeixinOwnershipType) => {
+    await imService.updateConfig({
+      settings: {
+        ...config.settings,
+        weixinOwnership: value,
+      },
+    });
+  };
 
   // Handle POPO OpenClaw config change
   const popoConfig = config.popo;
@@ -2666,6 +2711,71 @@ const IMSettings: React.FC = () => {
         {/* Weixin (微信) Settings */}
         {activePlatform === 'weixin' && (
           <div className="space-y-3">
+            <div className="rounded-lg border border-border-subtle bg-surface-elevated p-3 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1.5">
+                  {i18nService.t('imWeixinRespondingAgent')}
+                </label>
+                <select
+                  value={weixinAgentBinding}
+                  onChange={(event) => void handleWeixinAgentBindingChange(event.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-border-subtle bg-surface text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <option value="main">
+                    {i18nService.t('imWeixinDefaultAgentOption')}
+                  </option>
+                  {enabledAgents.map(agent => (
+                    <option key={agent.id} value={`agent:${agent.id}`}>
+                      {agent.icon} {agent.name} · {agentEngineLabel(agent.agentEngine)} · {agent.skillIds.length} {i18nService.t('imWeixinSkillCount')}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-secondary">
+                  {selectedWeixinAgent
+                    ? i18nService.t('imWeixinAgentBindingHintCustom')
+                      .replace('{name}', selectedWeixinAgent.name)
+                      .replace('{engine}', agentEngineLabel(selectedWeixinAgent.agentEngine))
+                    : i18nService.t('imWeixinAgentBindingHintDefault')}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1.5">
+                  {i18nService.t('imWeixinOwnershipTitle')}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    {
+                      value: WeixinOwnership.WesightManaged,
+                      label: i18nService.t('imWeixinOwnershipWesight'),
+                    },
+                    {
+                      value: WeixinOwnership.LocalOpenClaw,
+                      label: i18nService.t('imWeixinOwnershipOpenClaw'),
+                    },
+                  ].map(option => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => void handleWeixinOwnershipChange(option.value)}
+                      className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                        weixinOwnership === option.value
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border-subtle bg-surface text-secondary hover:text-foreground'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs text-secondary">
+                  {weixinOwnership === WeixinOwnership.WesightManaged
+                    ? i18nService.t('imWeixinOwnershipWesightHint')
+                    : i18nService.t('imWeixinOwnershipOpenClawHint')}
+                </p>
+              </div>
+            </div>
+
             {/* Scan QR code section */}
             <div className="rounded-lg border border-dashed border-border-subtle p-4 text-center space-y-3">
               {(weixinQrStatus === 'idle' || weixinQrStatus === 'error') && (

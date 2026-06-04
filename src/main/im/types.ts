@@ -12,6 +12,8 @@ import {
   FeishuRuntimeOwnership,
   type FeishuRuntimeOwnershipType,
   type FeishuSecretStatusType,
+  WeixinOwnership,
+  type WeixinOwnershipType,
 } from '../../shared/im/constants';
 import type { Platform } from '../../shared/platform';
 export type { Platform } from '../../shared/platform';
@@ -434,6 +436,8 @@ export interface WeixinGatewayStatus {
   lastError: string | null;
   lastInboundAt: number | null;
   lastOutboundAt: number | null;
+  ownership?: WeixinOwnershipType;
+  accountId?: string | null;
 }
 
 // ==================== Common IM Types ====================
@@ -457,6 +461,7 @@ export interface IMSettings {
   skillsEnabled: boolean;
   feishuManagementMode?: FeishuManagementModeType;
   feishuOwnershipByEngine?: Partial<Record<FeishuEngineKeyType, FeishuRuntimeOwnershipType>>;
+  weixinOwnership?: WeixinOwnershipType;
   /** Per-platform agent binding. Key = platform name, value = agent ID. Absent or 'main' = default. */
   platformAgentBindings?: Record<string, string>;
 }
@@ -747,6 +752,7 @@ export const DEFAULT_IM_SETTINGS: IMSettings = {
     [FeishuEngineKey.OpenClaw]: FeishuRuntimeOwnership.LocalRuntime,
     [FeishuEngineKey.Hermes]: FeishuRuntimeOwnership.WesightManaged,
   },
+  weixinOwnership: WeixinOwnership.WesightManaged,
 };
 
 export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
@@ -839,6 +845,8 @@ export const DEFAULT_WEIXIN_STATUS: WeixinGatewayStatus = {
   lastError: null,
   lastInboundAt: null,
   lastOutboundAt: null,
+  ownership: WeixinOwnership.WesightManaged,
+  accountId: null,
 };
 
 export const DEFAULT_IM_STATUS: IMGatewayStatus = {

@@ -15,7 +15,7 @@ import type {
 } from '@shared/cowork/runtimeMetrics';
 import type { CoworkSessionRuntimeSnapshot } from '@shared/cowork/runtimeSnapshot';
 import type { CoworkStudioAssetsResult } from '@shared/cowork/studioAssets';
-import type { FeishuEngineKeyType, FeishuManagementModeType, FeishuRuntimeOwnershipType } from '@shared/im/constants';
+import type { FeishuEngineKeyType, FeishuManagementModeType, FeishuRuntimeOwnershipType, WeixinOwnershipType } from '@shared/im/constants';
 import type { DesktopPetTaskSnapshot, PetConfig, PetPosition } from '@shared/pet/constants';
 import type { SkillMarketplaceSort, SkillMarketplaceSourceType } from '@shared/skills/constants';
 
@@ -1314,6 +1314,8 @@ interface IMSettings {
   skillsEnabled: boolean;
   feishuManagementMode?: FeishuManagementModeType;
   feishuOwnershipByEngine?: Partial<Record<FeishuEngineKeyType, FeishuRuntimeOwnershipType>>;
+  weixinOwnership?: WeixinOwnershipType;
+  platformAgentBindings?: Record<string, string>;
 }
 
 interface IMGatewayStatus {
@@ -1447,6 +1449,8 @@ interface WeixinGatewayStatus {
   lastError: string | null;
   lastInboundAt: number | null;
   lastOutboundAt: number | null;
+  ownership?: WeixinOwnershipType;
+  accountId?: string | null;
 }
 
 interface IMMessage {

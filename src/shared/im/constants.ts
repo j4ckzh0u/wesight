@@ -34,6 +34,13 @@ export const FeishuEngineKey = {
 
 export type FeishuEngineKeyType = typeof FeishuEngineKey[keyof typeof FeishuEngineKey];
 
+export const WeixinOwnership = {
+  WesightManaged: 'wesight_managed',
+  LocalOpenClaw: 'local_openclaw',
+} as const;
+
+export type WeixinOwnershipType = typeof WeixinOwnership[keyof typeof WeixinOwnership];
+
 export const FEISHU_ENGINE_KEYS = [
   FeishuEngineKey.OpenClaw,
   FeishuEngineKey.Hermes,
@@ -66,4 +73,9 @@ export const isFeishuEngineKey = (value: unknown): value is FeishuEngineKeyType 
   || value === FeishuEngineKey.Hermes
   || value === FeishuEngineKey.ClaudeCode
   || value === FeishuEngineKey.Codex
+);
+
+export const isWeixinOwnership = (value: unknown): value is WeixinOwnershipType => (
+  value === WeixinOwnership.WesightManaged
+  || value === WeixinOwnership.LocalOpenClaw
 );

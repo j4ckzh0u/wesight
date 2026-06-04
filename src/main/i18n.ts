@@ -196,6 +196,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinConfigReady: '微信配置已就绪。',
     imWeixinOpenClawHint: '微信通过 OpenClaw 运行时运行，Bot 将在 OpenClaw Gateway 启动后自动连接。',
     imWeixinConfigReadyOpenClaw: '微信配置已就绪，通过 OpenClaw 运行。',
+    imWeixinQrRequired: '微信尚未扫码连接。',
+    imWeixinScanSuggestion: '请点击扫码连接微信，完成后 WeSight 会接管收发消息。',
+    imWeixinNativeReady: '微信账号 {accountId} 已连接。',
+    imWeixinNativeRunning: '微信由 WeSight 管理，原生网关正在运行。',
+    imWeixinNativeManagedHint: '微信由 WeSight 管理，扫码后会直接通过 WeSight 收发消息。',
 
     // NIM
     imNimFillCredentials: '请补全 AppKey、Account 和 Token 后重新测试连通性。',
@@ -397,6 +402,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinConfigReady: 'WeChat configuration is ready.',
     imWeixinOpenClawHint: 'WeChat runs via OpenClaw runtime. The bot will connect automatically when OpenClaw Gateway starts.',
     imWeixinConfigReadyOpenClaw: 'WeChat configuration is ready, running via OpenClaw.',
+    imWeixinQrRequired: 'WeChat is not connected yet.',
+    imWeixinScanSuggestion: 'Click scan to connect WeChat. WeSight will manage inbound and outbound messages after login.',
+    imWeixinNativeReady: 'WeChat account {accountId} is connected.',
+    imWeixinNativeRunning: 'WeChat is managed by WeSight, and the native gateway is running.',
+    imWeixinNativeManagedHint: 'WeChat is managed by WeSight. After QR login, WeSight will send and receive messages directly.',
 
     // NIM
     imNimFillCredentials: 'Please provide the AppKey, Account, and Token and test connectivity again.',

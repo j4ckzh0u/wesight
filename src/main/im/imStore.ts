@@ -16,6 +16,8 @@ import {
   isFeishuEngineKey,
   isFeishuManagementMode,
   isFeishuRuntimeOwnership,
+  isWeixinOwnership,
+  WeixinOwnership,
 } from '../../shared/im/constants';
 import { PlatformRegistry } from '../../shared/platform';
 import {
@@ -188,10 +190,18 @@ export class IMStore {
     if (settingsRow) {
       try {
         const settings = JSON.parse(settingsRow.value) as Partial<IMSettings>;
+        let changed = false;
         // Keep IM and desktop behavior aligned: skills auto-routing should be on by default.
         // Historical renderer default could persist `skillsEnabled: false` unintentionally.
         if (settings.skillsEnabled !== true) {
           settings.skillsEnabled = true;
+          changed = true;
+        }
+        if (!isWeixinOwnership(settings.weixinOwnership)) {
+          settings.weixinOwnership = WeixinOwnership.WesightManaged;
+          changed = true;
+        }
+        if (changed) {
           const now = Date.now();
           this.db
             .prepare('UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?')
