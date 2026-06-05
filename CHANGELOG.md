@@ -18,6 +18,7 @@
 - Windows 安装资源改为通过 `win-resources.tar` 打包并在安装阶段解包，减少大量小文件直接由 NSIS 写入的安装开销。
 - Windows 包默认不捆绑 OpenClaw runtime，与 macOS runtime 策略保持一致；需要捆绑时通过显式构建开关启用。
 - Windows Defender exclusion 改为 trusted build opt-in，不再默认添加。
+- 更新 Windows packaging 和 OpenClaw runtime 构建辅助脚本，统一 Windows 环境准备、runtime 构建和资源打包基线。
 - 外部 CLI agent 配置稳定性增强，Codex 默认使用本地 CLI 配置，Claude Code 尽量保留本地 CLI 凭据。
 - Cowork 主界面的 Agent 引擎选择器只探测当前 engine，避免打开下拉框时触发全量 CLI 探测。
 - 内置 Skill 文案和脚本品牌从 LobsterAI 对齐为 WeSight。
